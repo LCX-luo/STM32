@@ -145,11 +145,44 @@ void my_os_free(void *ptr)
 /************************ 核心链表操作 ************************/
 
 void taskMoveInReady(TaskList *newTask)
-{
-    if (newTask == NULL)
+{   
+    if (newTask == NULL) {
         return;
+    }
 
+    // 【修正 2】：第一步，必须无条件先将状态改为就绪态
     newTask->taskTCB.task_state = READY;
+
+    // 只有系统已经开始调度了，才进行 VIP 抢占判定
+    if (runninglist != NULL)
+    {
+        // 如果新任务优先级大于正在运行的任务
+        if (newTask->taskTCB.priority > runninglist->taskTCB.priority)
+        {
+            // 如果 VIP 席位空缺，或者新任务优先级比当前 VIP 还要高
+            if (next_task_ptr == NULL || newTask->taskTCB.priority > next_task_ptr->taskTCB.priority)
+            {
+                // 【修正 1】：剥离相互矛盾的 if 嵌套
+                if (next_task_ptr != NULL) {
+                    // 原来的 VIP 退位，作为普通任务重新走一遍本函数，挂入链表
+                    taskMoveInReady(next_task_ptr);
+                }
+                
+                // 新皇登基
+                next_task_ptr = newTask;
+                
+                // 悬起 PendSV 请求调度
+                SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
+                
+                // VIP 任务已在专属指针中就位，不需要挂入双向链表，直接返回
+                return; 
+            }
+        }
+    }
+
+    // ============================================
+    // 下方为普通任务（或被淘汰的旧 VIP）的链表插入逻辑
+    // ============================================
     unsigned int priority = newTask->taskTCB.priority;
 
     if (readyList[priority] == NULL)
@@ -308,31 +341,7 @@ TaskList *TaskCreate(void (*taskFunction)(void), unsigned int priority, unsigned
     newTask->next = NULL;
     newTask->prev = NULL;
 
-    if (OS_Running == 1)
-    {
-        if (newTask->taskTCB.priority > runninglist->taskTCB.priority)
-        {
-            if (next_task_ptr == NULL || newTask->taskTCB.priority > next_task_ptr->taskTCB.priority)
-            {
-                if (next_task_ptr != NULL)
-                    taskMoveInReady(next_task_ptr);
-                next_task_ptr = newTask;
-                SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
-            }
-            else
-            {
-                taskMoveInReady(newTask);
-            }
-        }
-        else
-        {
-            taskMoveInReady(newTask);
-        }
-    }
-    else
-    {
-        taskMoveInReady(newTask);
-    }
+    taskMoveInReady(newTask);
 
     char *msg = "createtask\r\n";
     HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
@@ -521,20 +530,7 @@ void SysTick_Handler(void)
 
         wakeTask->taskTCB.task_state = READY;
 
-        if (runninglist != NULL)
-        {
-            if (wakeTask->taskTCB.priority > runninglist->taskTCB.priority)
-            {
-                if (next_task_ptr == NULL || wakeTask->taskTCB.priority > next_task_ptr->taskTCB.priority)
-                {
-                    if (next_task_ptr != NULL)
-                        taskMoveInReady(next_task_ptr);
-                    next_task_ptr = wakeTask;
-                    SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
-                    continue;
-                }
-            }
-        }
+        
         taskMoveInReady(wakeTask);
     }
     __enable_irq();
@@ -630,25 +626,7 @@ void resumeTask(TaskList *task)
     {
         taskMoveOutList(task);
         task->taskTCB.task_state = READY; // 必须先改状态！
-
-        // 【核心修复】
-        uint8_t is_vip = 0;
-        if (runninglist != NULL && task->taskTCB.priority > runninglist->taskTCB.priority)
-        {
-            if (next_task_ptr == NULL || task->taskTCB.priority > next_task_ptr->taskTCB.priority)
-            {
-                if (next_task_ptr != NULL)
-                    taskMoveInReady(next_task_ptr);
-                next_task_ptr = task;
-                SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
-                is_vip = 1;
-            }
-        }
-
-        if (is_vip == 0)
-        {
-            taskMoveInReady(task);
-        }
+        taskMoveInReady(task);
     }
     __enable_irq();
 }
@@ -788,19 +766,7 @@ void SemaphoreGive(Semaphore_t *sem)
         wakeTask->prev = NULL;
         wakeTask->taskTCB.task_state = READY;
 
-        // 3. 抢占判定：如果你唤醒的任务优先级比当前正在运行的任务高，必须触发调度
-        if (runninglist != NULL && wakeTask->taskTCB.priority > runninglist->taskTCB.priority)
-        {
-            if (next_task_ptr == NULL || wakeTask->taskTCB.priority > next_task_ptr->taskTCB.priority)
-            {
-                if (next_task_ptr != NULL)
-                    taskMoveInReady(next_task_ptr);  // 保护原本的 next_task
-                next_task_ptr = wakeTask;            // 预约高优任务
-                SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk; // 触发调度
-                __enable_irq();
-                return;
-            }
-        }
+        
 
         // 2. 将其放回系统的就绪链表
         taskMoveInReady(wakeTask);
@@ -932,25 +898,8 @@ void MutexGive(Mutex_t *mutex)
         mutex->owner_priority = wakeTask->taskTCB.priority;
 
         wakeTask->taskTCB.task_state = READY;
-
-        // 【核心修复】
-        uint8_t is_vip = 0;
-        if (runninglist != NULL && wakeTask->taskTCB.priority > runninglist->taskTCB.priority)
-        {
-            if (next_task_ptr == NULL || wakeTask->taskTCB.priority > next_task_ptr->taskTCB.priority)
-            {
-                if (next_task_ptr != NULL)
-                    taskMoveInReady(next_task_ptr);
-                next_task_ptr = wakeTask;
-                SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
-                is_vip = 1;
-            }
-        }
-
-        if (is_vip == 0)
-        {
-            taskMoveInReady(wakeTask);
-        }
+        taskMoveInReady(wakeTask);
+        
     }
     else
     {
@@ -1052,25 +1001,8 @@ uint8_t QueueSend(Queue_t *queue, void *item)
         wakeTask->prev = NULL;
 
         wakeTask->taskTCB.task_state = READY;
-
-        // 【核心修复】：互斥判定，决不能既进 VIP 通道，又进就绪链表
-        uint8_t is_vip = 0;
-        if (runninglist != NULL && wakeTask->taskTCB.priority > runninglist->taskTCB.priority)
-        {
-            if (next_task_ptr == NULL || wakeTask->taskTCB.priority > next_task_ptr->taskTCB.priority)
-            {
-                if (next_task_ptr != NULL)
-                    taskMoveInReady(next_task_ptr); // 原VIP退回就绪表排队
-                next_task_ptr = wakeTask;           // 新皇登基
-                SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
-                is_vip = 1;
-            }
-        }
-
-        if (is_vip == 0)
-        {
-            taskMoveInReady(wakeTask); // 只有不是 VIP，才去就绪表
-        }
+            taskMoveInReady(wakeTask); 
+        
     }
 
     __enable_irq(); // 发送完毕，开门
@@ -1140,24 +1072,7 @@ uint8_t QueueReceive(Queue_t *queue, void *buffer)
         wakeTask->prev = NULL;
 
         wakeTask->taskTCB.task_state = READY;
-
-        uint8_t is_vip = 0;
-        if (runninglist != NULL && wakeTask->taskTCB.priority > runninglist->taskTCB.priority)
-        {
-            if (next_task_ptr == NULL || wakeTask->taskTCB.priority > next_task_ptr->taskTCB.priority)
-            {
-                if (next_task_ptr != NULL)
-                    taskMoveInReady(next_task_ptr);
-                next_task_ptr = wakeTask;
-                SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
-                is_vip = 1;
-            }
-        }
-
-        if (is_vip == 0)
-        {
             taskMoveInReady(wakeTask);
-        }
     }
     __enable_irq();
     return 1;
