@@ -10,7 +10,7 @@
 #define TASK_NAME_MAX_LENGTH 10
 #define RTOS_HEAP_SIZE 8192
 #define TASK_DEFAULT_STACK_SIZE 256
-
+#define WDG_TIMEOUT_MS 9000 // 软件看门狗超时时间配置为9s
 /************************ 任务状态枚举定义 ************************/
 typedef enum
 {
@@ -57,7 +57,8 @@ void my_os_heap_init(void);
 void *my_os_malloc(uint32_t size);
 void my_os_free(void *ptr);
 
-TaskList *TaskCreate(void (*taskFunction)(void), unsigned int priority, unsigned char *TaskName);
+// 修改 rtos.h 中的声明
+TaskList *TaskCreate(void (*taskFunction)(void *), void *arg, unsigned int priority, unsigned char *TaskName);
 void StartScheduler(void);
 void taskdelay(unsigned int ms);
 void TaskDelete(TaskList *task);

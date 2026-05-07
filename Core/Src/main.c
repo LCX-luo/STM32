@@ -9,53 +9,63 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "dma.h"
+#include "iwdg.h"
 #include "usart.h"
 #include "gpio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h> // 引入 stdio 用于 sprintf 格式化字符串
-#include "string.h"
-#include "rtos.h"
-#include "usart.h"
-#include "gpio.h"
-#include "string.h"
+#include <stdio.h>
+#include <string.h>
+#include <stdarg.h> // 为了使用 va_list
+#include "rtos.h"   // 引入自定义 RTOS 系统
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
-
+// 规范：将自定义类型定义统一放置于此
+typedef struct
+{
+  char text[128]; // 确保有足够容量容纳时间戳和可变参数
+} LogMsg_t;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+// 规范：将全局变量和系统内核句柄统一放置于此
+Queue_t *PrintQueue = NULL;
+Semaphore_t *DmaTxSem = NULL;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-void Task1_Entry(void);
-void Task2_Entry(void);
-void Task3_Entry(void);
+// 规范：任务入口与私有函数的声明
+void PrintTask_Entry(void *arg);
+void Task1_Entry(void *arg);
+void Task2_Entry(void *arg);
+void Task3_Entry(void *arg);
+void badtask(void *arg);
+uint8_t my_itoa(unsigned int num, char *str);
+void LOGI(const char *format, ...);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+// 规范：用户自定义函数的实现均放置在 0 区
 
-// 【新增】超轻量级：无符号整数转字符串函数
-// 将数字 num 转换为字符串存入 str，并返回字符串的长度
+/**
+ * @brief 超轻量级无符号整数转字符串函数
+ */
 uint8_t my_itoa(unsigned int num, char *str)
 {
   int i = 0;
@@ -66,7 +76,7 @@ uint8_t my_itoa(unsigned int num, char *str)
     return 1;
   }
 
-  char temp[16]; // 临时倒序存放
+  char temp[16];
   int j = 0;
   while (num > 0)
   {
@@ -74,7 +84,6 @@ uint8_t my_itoa(unsigned int num, char *str)
     num /= 10;
   }
 
-  // 正序输出到目标字符串
   while (j > 0)
   {
     str[i++] = temp[--j];
@@ -83,89 +92,149 @@ uint8_t my_itoa(unsigned int num, char *str)
   return i;
 }
 
-// ... 下面保留你之前的 LogMsg_t 定义和队列指针 ...
-typedef struct
+/**
+ * @brief 应用层异步日志打印函数 (类似 printf)
+ * @note 绝不能在中断(ISR)或操作系统启动前调用此函数！
+ */
+void LOGI(const char *format, ...)
 {
-  char text[32];
-} LogMsg_t;
+  LogMsg_t txMsg;
+  int timestamp_len;
+  int remain_len;
 
-Queue_t *PrintQueue;
-// DMA发送完成的同步信号量
-Semaphore_t *DmaTxSem;
+  timestamp_len = snprintf(txMsg.text, sizeof(txMsg.text), "%ums ", OsRunningTime_ms);
+  if (timestamp_len < 0 || timestamp_len >= sizeof(txMsg.text))
+  {
+    return;
+  }
 
-void PrintTask_Entry(void)
+  remain_len = sizeof(txMsg.text) - timestamp_len;
+
+  va_list args;
+  va_start(args, format);
+  vsnprintf(&txMsg.text[timestamp_len], remain_len, format, args);
+  va_end(args);
+
+  QueueSend(PrintQueue, &txMsg);
+}
+
+/**
+ * @brief DMA 驱动的后台打印任务 (消费者)
+ */
+void PrintTask_Entry(void *arg)
 {
   LogMsg_t rxMsg;
   while (1)
   {
-    // 2. 等待 DMA 叉车处于空闲状态
-    // (如果上一帧还没发完，任务在这里挂起，不占 CPU)
     SemaphoreTake(DmaTxSem);
-    // 1. 等待业务任务把日志扔进仓库（水池）
     QueueReceive(PrintQueue, &rxMsg);
-
-    // 3. 叉车空闲了，启动 DMA 硬件发送！
-    // 注意：这里调用的是 _DMA 后缀的非阻塞函数，调用后瞬间返回！
     HAL_UART_Transmit_DMA(&huart2, (uint8_t *)rxMsg.text, strlen(rxMsg.text));
-
-    // 循环回去接着等队列，如果队列还有数据，马上拿出来，但会在 SemaphoreTake 处等前一帧发完。
   }
 }
 
-// ==========================================================
-// 改造后的 Task1
-// ==========================================================
-void Task1_Entry(void)
+/**
+ * @brief 业务任务 1：演示任务控制与日志输出
+ */
+void Task1_Entry(void *arg)
 {
-  LogMsg_t txMsg;
-  uint8_t len;
+  int loop_count = 0;
+  TaskList *target_task = (TaskList *)arg;
+
   while (1)
   {
-    // 1. 先把时间戳数字变成字符串写入 txMsg.text
-    len = my_itoa(OsRunningTime_ms, txMsg.text);
+    loop_count++;
+    LOGI("Task1 is running, loop count: %d\r\n", loop_count);
 
-    // 2. 把后缀拼接到时间戳后面 (替代原来的 "%ums 1\n")
-    strcpy(&txMsg.text[len], "ms 1\r\n");
-
-    QueueSend(PrintQueue, &txMsg);
+    if (loop_count == 2)
+    {
+      LOGI("delete task3\r\n");
+      TaskDelete(target_task);
+      target_task = NULL;
+    }
+    if (loop_count == 3)
+    {
+      TaskCreate(Task3_Entry, NULL, 3, (unsigned char *)"Task3_VIP");
+      LOGI("create task3\r\n");
+    }
     taskdelay(8000);
   }
 }
 
-// ==========================================================
-// 改造后的 Task2
-// ==========================================================
-void Task2_Entry(void)
+/**
+ * @brief 业务任务 2：高频 LED 闪烁
+ */
+void Task2_Entry(void *arg)
 {
-  LogMsg_t txMsg;
-  uint8_t len;
   while (1)
   {
     HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-
-    len = my_itoa(OsRunningTime_ms, txMsg.text);
-    strcpy(&txMsg.text[len], "ms 2\r\n");
-
-    QueueSend(PrintQueue, &txMsg);
+    LOGI(" 2\r\n");
     taskdelay(500);
   }
 }
 
-// ==========================================================
-// 改造后的 Task3 (VIP)
-// ==========================================================
-void Task3_Entry(void)
+/**
+ * @brief 业务任务 3：VIP 数据处理任务 (含静态变量测试)
+ */
+void Task3_Entry(void *arg)
 {
-  LogMsg_t txMsg;
-  uint8_t len;
+  static int x = 0;
   while (1)
   {
-    len = my_itoa(OsRunningTime_ms, txMsg.text);
-    strcpy(&txMsg.text[len], "ms 3_VIP\r\n");
-
-    QueueSend(PrintQueue, &txMsg);
+    x++;
+    LOGI(" 3_VIP,%d\r\n", x);
     taskdelay(2900);
   }
+}
+
+/**
+ * @brief 故意引发饥饿死机的异常任务
+ */
+void badtask(void *arg)
+{
+  while (1)
+  {
+    // 霸占 CPU，不调用任何阻塞函数，引发软看门狗复位
+  }
+}
+/**
+ * @brief 工业级按键扫描任务 (含消抖与边沿触发逻辑)
+ */
+void ledtask(void *arg)
+{
+    while (1)
+    {
+        // 1. 发现高电平（疑似按下）
+        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
+        {
+            // 2. 软件消抖：等待 20ms，让物理弹片的机械抖动平息
+            taskdelay(20);
+
+            // 3. 再次确认：如果 20ms 后依然是高电平，说明是真正的按压，而非电磁干扰或毛刺
+            if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
+            {
+                // ==========================================
+                // 4. 核心触发区：在这里执行你的单次按键动作
+                // ==========================================
+
+                
+                // 5. 等待松开 (长按拦截)：只要按键没松开，就一直在里面循环
+                while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
+                {
+                    // 【关键】：在RTOS的死循环里，绝对不能干等！
+                    // 必须加一个小延时，把CPU控制权交出去，否则会引发看门狗超时或任务饥饿
+                    taskdelay(10); 
+                }
+                HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5);
+                LOGI("Button Pressed! LED Toggled.\r\n"); // 顺便测试一下你的LOGI
+                // 6. 松手消抖：离开上面的 while 说明刚刚松手，延时过滤松开瞬间的抖动
+                taskdelay(20);
+            }
+        }
+        
+        // 当按键没有被按下时，也需要稍微延时交出 CPU，防止空转浪费算力
+        taskdelay(10);
+    }
 }
 /* USER CODE END 0 */
 
@@ -177,7 +246,6 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -200,25 +268,28 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_USART2_UART_Init();
+  MX_IWDG_Init();
   /* USER CODE BEGIN 2 */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
 
   char *msg = "\r\n--- RTOS System Starting ---\r\n";
   HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
-  HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13); // 点亮 LED
-  // 1. 初始化 RTOS 堆内存
-  my_os_heap_init();
-  // 创建一个容量为 10，每个坑位大小为一个 LogMsg_t 的队列
-  PrintQueue = QueueCreate(10, sizeof(LogMsg_t));
-  // 【新增】创建一个二值信号量，初始值为 1 (代表资源可用)
-  DmaTxSem = SemaphoreCreate(1);
-  // 2. 创建三个任务，分配不同的优先级
-  TaskCreate(PrintTask_Entry, 2, "PrintTask");
-  TaskCreate(Task1_Entry, 1, (unsigned char *)"Task1");
-  TaskCreate(Task2_Entry, 1, (unsigned char *)"Task2");
-  TaskCreate(Task3_Entry, 2, (unsigned char *)"Task3_VIP"); // 高优先级
+  HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
 
-  // 3. 启动 RTOS 调度器，点火！
+  // 1. 初始化系统核心与内存
+  my_os_heap_init();
+
+  // 2. 初始化核心 IPC（进程间通信）机制
+  PrintQueue = QueueCreate(10, sizeof(LogMsg_t));
+  DmaTxSem = SemaphoreCreate(1);
+
+  // 3. 创建所有业务任务
+  TaskList *task = TaskCreate(Task3_Entry, NULL, 2, (unsigned char *)"Task3_VIP");
+  TaskCreate(PrintTask_Entry, NULL, 3, (unsigned char *)"PrintTask");
+  TaskCreate(Task1_Entry, task, 2, (unsigned char *)"Task1");
+  TaskCreate(Task2_Entry, NULL, 2, (unsigned char *)"Task2");
+  TaskCreate(ledtask,NULL, 2, (unsigned char *)"LedTask");
+  // 4. 启动调度器，系统接管 CPU 控制权
   StartScheduler();
   /* USER CODE END 2 */
 
@@ -229,7 +300,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    // 永远不会走到这里
   }
   /* USER CODE END 3 */
 }
@@ -246,10 +316,11 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
    * in the RCC_OscInitTypeDef structure.
    */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI | RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL9;
@@ -273,20 +344,16 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-/* USER CODE BEGIN 4 */
-
-// 【新增】HAL库串口/DMA发送彻底完成后的中断回调函数
+/**
+ * @brief 串口 DMA 发送完成中断回调函数
+ */
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
   if (huart->Instance == USART2)
   {
-    // 核心：叉车搬完了，在中断里给出一发二值信号量！
-    // 这会瞬间唤醒正在 SemaphoreTake 处死等的 PrintTask，让它安排下一车。
-    SemaphoreGive(DmaTxSem);
+    SemaphoreGive(DmaTxSem); // 唤醒 PrintTask 进行下一帧发送
   }
 }
-
-/* USER CODE END 4 */
 /* USER CODE END 4 */
 
 /**

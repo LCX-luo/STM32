@@ -2,18 +2,18 @@
 #include "usart.h"
 #include "gpio.h"
 #include "string.h"
+#include "iwdg.h"  
 #include <stdio.h>
 /************************ 宏定义与内部声明 ************************/
-#define WDG_TIMEOUT_MS 300 // 软件看门狗超时时间配置为300ms
+
 
 // 前置声明系统内部的空闲任务
-static void IdleTask_Entry(void);
+static void IdleTask_Entry(void* arg);
 
 /************************ 全局变量定义 ************************/
 unsigned int OsRunningTime_ms = 0;
 uint8_t OS_Running = 0;               // 0代表系统未启动，1代表已启动
 volatile uint32_t sw_wdg_counter = 0; // 软件看门狗计数器
-
 // 就绪数组，每个元素是一条双向链表头
 TaskList *readyList[Max_PRIORITY];
 // 下一个要执行的任务
@@ -259,7 +259,7 @@ void taskMoveOutList(TaskList *task)
 /************************ 内部系统任务 ************************/
 
 // 操作系统专属后台空闲任务 (最低优先级)
-static void IdleTask_Entry(void)
+static void IdleTask_Entry(void* arg)
 {
     while (1)
     {
@@ -295,11 +295,11 @@ static void IdleTask_Entry(void)
 
 /************************ 任务与调度 API ************************/
 
-TaskList *TaskCreate(void (*taskFunction)(void), unsigned int priority, unsigned char *TaskName)
+// 修改 rtos.h 中的声明
+TaskList *TaskCreate(void (*taskFunction)(void *), void *arg, unsigned int priority, unsigned char *TaskName)
 {
     if (taskFunction == NULL || priority >= Max_PRIORITY)
         return NULL;
-
     TaskList *newTask = (TaskList *)my_os_malloc(sizeof(TaskList));
     if (newTask == NULL)
         return NULL;
@@ -326,6 +326,8 @@ TaskList *TaskCreate(void (*taskFunction)(void), unsigned int priority, unsigned
             *newTask->taskTCB.stack_ptr = (unsigned int)taskFunction;
         else if (i == 3)
             *newTask->taskTCB.stack_ptr = 0xFFFFFFFD;
+        else if(i==8)
+            *newTask->taskTCB.stack_ptr =   arg==NULL? 0x00000000:(unsigned int)arg;
         else
             *newTask->taskTCB.stack_ptr = 0x00000000;
     }
@@ -349,7 +351,8 @@ TaskList *TaskCreate(void (*taskFunction)(void), unsigned int priority, unsigned
 }
 
 void TaskSwitch(void)
-{
+{   
+    __disable_irq();
     if (next_task_ptr != NULL)
     {
         if (runninglist != NULL)
@@ -364,6 +367,7 @@ void TaskSwitch(void)
         runninglist = next_task_ptr;
         runninglist->taskTCB.task_state = RUNNING;
         next_task_ptr = NULL;
+        __enable_irq();
         return;
     }
 
@@ -377,13 +381,19 @@ void TaskSwitch(void)
         }
     }
 
-    if (highest_ready_prio == -1)
-        return;
+    if (highest_ready_prio == -1){
+        __enable_irq();
+         return;
+    }
+       
 
     if (runninglist != NULL && runninglist->taskTCB.task_state == RUNNING)
     {
-        if (runninglist->taskTCB.priority > highest_ready_prio)
-            return;
+        if (runninglist->taskTCB.priority > highest_ready_prio){
+            __enable_irq();
+            return ;
+        }
+            
 
         runninglist->taskTCB.task_state = READY;
         taskMoveInReady(runninglist);
@@ -393,6 +403,7 @@ void TaskSwitch(void)
     taskMoveOutList(runninglist); // 统一的移出逻辑
 
     runninglist->taskTCB.task_state = RUNNING;
+    __enable_irq();
 }
 
 extern void TaskSwitch(void);
@@ -451,7 +462,7 @@ void StartScheduler(void)
     sw_wdg_counter = 0;
 
     // 2. 创建内部任务。此时因为中断关闭，里面的串口打印绝对安全
-    TaskCreate(IdleTask_Entry, 0, (unsigned char *)"OS_Idle");
+    TaskCreate(IdleTask_Entry, NULL,0, (unsigned char *)"OS_Idle");
 
     // （可选：加了换行符，终端才能立刻显示）
     char *msg = "time=0\r\n";
@@ -480,7 +491,7 @@ void SysTick_Handler(void)
     HAL_IncTick();
     OsRunningTime_ms++;
     sw_wdg_counter++; // 软件看门狗计数增加
-
+    HAL_IWDG_Refresh(&hiwdg); // 中断看门狗刷新
     // 检查软件看门狗是否超时
     if (sw_wdg_counter > WDG_TIMEOUT_MS)
     {

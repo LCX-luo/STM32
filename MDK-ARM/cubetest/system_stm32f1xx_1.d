@@ -23,6 +23,7 @@ cubetest\system_stm32f1xx_1.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal
 cubetest\system_stm32f1xx_1.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_cortex.h
 cubetest\system_stm32f1xx_1.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_flash.h
 cubetest\system_stm32f1xx_1.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_flash_ex.h
+cubetest\system_stm32f1xx_1.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_iwdg.h
 cubetest\system_stm32f1xx_1.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_pwr.h
 cubetest\system_stm32f1xx_1.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.h
 cubetest\system_stm32f1xx_1.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h

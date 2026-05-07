@@ -25,6 +25,7 @@ cubetest\rtos.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_dma_ex.h
 cubetest\rtos.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_cortex.h
 cubetest\rtos.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_flash.h
 cubetest\rtos.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_flash_ex.h
+cubetest\rtos.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_iwdg.h
 cubetest\rtos.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_pwr.h
 cubetest\rtos.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim.h
 cubetest\rtos.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_tim_ex.h
@@ -32,4 +33,5 @@ cubetest\rtos.o: ../Drivers/STM32F1xx_HAL_Driver/Inc/stm32f1xx_hal_uart.h
 cubetest\rtos.o: ../Core/Inc/usart.h
 cubetest\rtos.o: ../Core/Inc/gpio.h
 cubetest\rtos.o: D:\keil\ARM\ARMCC\Bin\..\include\string.h
+cubetest\rtos.o: ../Core/Inc/iwdg.h
 cubetest\rtos.o: D:\keil\ARM\ARMCC\Bin\..\include\stdio.h
