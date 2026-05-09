@@ -44,6 +44,7 @@ typedef struct
 // 规范：将全局变量和系统内核句柄统一放置于此
 Queue_t *PrintQueue = NULL;
 Semaphore_t *DmaTxSem = NULL;
+Semaphore_t *ButtonSem = NULL;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -178,7 +179,7 @@ void Task2_Entry(void *arg)
  */
 void Task3_Entry(void *arg)
 {
-  static int x = 0;
+  static int x ;
   while (1)
   {
     x++;
@@ -204,44 +205,35 @@ void ledtask(void *arg)
 {
     while (1)
     {
-        // 1. 发现高电平（疑似按下）
+        // 1. 等待信号量。没有按键时，任务处于 BLOCKED 状态，不消耗算力
+        SemaphoreTake(ButtonSem);
+
+        // 2. 既然走到了这里，说明 EXTI 触发了。
+        // 为了和原本功能一致，进行软件消抖：
+        taskdelay(20); 
+
+        // 3. 再次确认电平（过滤电磁干扰）
         if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
         {
-            // 2. 软件消抖：等待 20ms，让物理弹片的机械抖动平息
-            taskdelay(20);
+            // 执行原本的逻辑
+            HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5);
+            LOGI("Button Pressed by EXTI! LED Toggled.\r\n");
 
-            // 3. 再次确认：如果 20ms 后依然是高电平，说明是真正的按压，而非电磁干扰或毛刺
-            if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
+            // 4. 等待松开逻辑保持不变
+            while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
             {
-                // ==========================================
-                // 4. 核心触发区：在这里执行你的单次按键动作
-                // ==========================================
-
-                
-                // 5. 等待松开 (长按拦截)：只要按键没松开，就一直在里面循环
-                while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
-                {
-                    // 【关键】：在RTOS的死循环里，绝对不能干等！
-                    // 必须加一个小延时，把CPU控制权交出去，否则会引发看门狗超时或任务饥饿
-                    taskdelay(10); 
-                }
-                HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5);
-                LOGI("Button Pressed! LED Toggled.\r\n"); // 顺便测试一下你的LOGI
-                // 6. 松手消抖：离开上面的 while 说明刚刚松手，延时过滤松开瞬间的抖动
-                taskdelay(20);
+                taskdelay(10); 
             }
+            taskdelay(20); // 松手消抖
         }
-        
-        // 当按键没有被按下时，也需要稍微延时交出 CPU，防止空转浪费算力
-        taskdelay(10);
     }
 }
 /* USER CODE END 0 */
 
 /**
- * @brief  The application entry point.
- * @retval int
- */
+  * @brief  The application entry point.
+  * @retval int
+  */
 int main(void)
 {
 
@@ -282,7 +274,7 @@ int main(void)
   // 2. 初始化核心 IPC（进程间通信）机制
   PrintQueue = QueueCreate(10, sizeof(LogMsg_t));
   DmaTxSem = SemaphoreCreate(1);
-
+  ButtonSem = SemaphoreCreate(0);
   // 3. 创建所有业务任务
   TaskList *task = TaskCreate(Task3_Entry, NULL, 2, (unsigned char *)"Task3_VIP");
   TaskCreate(PrintTask_Entry, NULL, 3, (unsigned char *)"PrintTask");
@@ -305,18 +297,18 @@ int main(void)
 }
 
 /**
- * @brief System Clock Configuration
- * @retval None
- */
+  * @brief System Clock Configuration
+  * @retval None
+  */
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
-   * in the RCC_OscInitTypeDef structure.
-   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI | RCC_OSCILLATORTYPE_HSE;
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_HSE;
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.HSEPredivValue = RCC_HSE_PREDIV_DIV1;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
@@ -330,8 +322,9 @@ void SystemClock_Config(void)
   }
 
   /** Initializes the CPU, AHB and APB buses clocks
-   */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
@@ -354,16 +347,26 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
     SemaphoreGive(DmaTxSem); // 唤醒 PrintTask 进行下一帧发送
   }
 }
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == GPIO_PIN_10)
+  {
+    // 路径终点：一旦产生硬件中断，立刻给信号量，唤醒任务
+    SemaphoreGive(ButtonSem); 
+  }
+}
+
 /* USER CODE END 4 */
 
 /**
- * @brief  Period elapsed callback in non blocking mode
- * @note   This function is called  when TIM1 interrupt took place, inside
- * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
- * a global variable "uwTick" used as application time base.
- * @param  htim : TIM handle
- * @retval None
- */
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM1 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   /* USER CODE BEGIN Callback 0 */
@@ -379,9 +382,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 }
 
 /**
- * @brief  This function is executed in case of error occurrence.
- * @retval None
- */
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
@@ -393,12 +396,12 @@ void Error_Handler(void)
 }
 #ifdef USE_FULL_ASSERT
 /**
- * @brief  Reports the name of the source file and the source line number
- *         where the assert_param error has occurred.
- * @param  file: pointer to the source file name
- * @param  line: assert_param error line source number
- * @retval None
- */
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
