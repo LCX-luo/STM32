@@ -5,6 +5,7 @@
 "cubetest\gpio.o"
 "cubetest\dma.o"
 "cubetest\iwdg.o"
+"cubetest\tim.o"
 "cubetest\usart.o"
 "cubetest\stm32f1xx_it.o"
 "cubetest\stm32f1xx_hal_msp.o"

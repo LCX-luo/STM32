@@ -10,6 +10,7 @@
 #include "main.h"
 #include "dma.h"
 #include "iwdg.h"
+#include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 
@@ -45,6 +46,8 @@ typedef struct
 Queue_t *PrintQueue = NULL;
 Semaphore_t *DmaTxSem = NULL;
 Semaphore_t *ButtonSem = NULL;
+volatile uint8_t breathing_mode = 1;     // 1: 呼吸模式, 0: 常亮模式
+volatile uint8_t global_button_flag = 0; // 通用按键事件标志，可供任意任务轮询读取
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -179,7 +182,7 @@ void Task2_Entry(void *arg)
  */
 void Task3_Entry(void *arg)
 {
-  static int x ;
+  static int x;
   while (1)
   {
     x++;
@@ -203,30 +206,106 @@ void badtask(void *arg)
  */
 void ledtask(void *arg)
 {
-    while (1)
+  while (1)
+  {
+    // 1. 等待信号量。没有按键时，任务处于 BLOCKED 状态，不消耗算力
+    SemaphoreTake(ButtonSem);
+
+    // 2. 既然走到了这里，说明 EXTI 触发了。
+    // 为了和原本功能一致，进行软件消抖：
+    taskdelay(20);
+
+    // 3. 再次确认电平（过滤电磁干扰）
+    if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
     {
-        // 1. 等待信号量。没有按键时，任务处于 BLOCKED 状态，不消耗算力
-        SemaphoreTake(ButtonSem);
+      // 执行原本的逻辑
+      HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5);
+      LOGI("Button Pressed by EXTI! LED Toggled.\r\n");
 
-        // 2. 既然走到了这里，说明 EXTI 触发了。
-        // 为了和原本功能一致，进行软件消抖：
-        taskdelay(20); 
-
-        // 3. 再次确认电平（过滤电磁干扰）
-        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
-        {
-            // 执行原本的逻辑
-            HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5);
-            LOGI("Button Pressed by EXTI! LED Toggled.\r\n");
-
-            // 4. 等待松开逻辑保持不变
-            while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
-            {
-                taskdelay(10); 
-            }
-            taskdelay(20); // 松手消抖
-        }
+      // 4. 等待松开逻辑保持不变
+      while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
+      {
+        taskdelay(10);
+      }
+      taskdelay(20); // 松手消抖
     }
+  }
+}
+
+// =========================================================================
+// 2. 全新通用按键事件分发任务 (替代原本的 ledtask)
+// 原理：利用 EXTI 中断释放的 Semaphore，唤醒本任务进行消抖并改变全局状态
+// =========================================================================
+void GenericButtonTask_Entry(void *arg)
+{
+  while (1)
+  {
+    // 1. 阻塞等待底层 EXTI 硬件中断触发 (释放 CPU 算力)
+    SemaphoreTake(ButtonSem);
+
+    // 2. 软件消抖
+    taskdelay(20);
+
+    // 3. 确认有效按下 (基于你原本的 PA10 高电平有效逻辑)
+    if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
+    {
+      // --- 核心业务逻辑触发区 ---
+      
+      // 功能 A：翻转呼吸灯状态
+      breathing_mode = !breathing_mode; 
+      
+      // 功能 B：置位通用事件标志，供其他随意编写的业务任务读取
+      global_button_flag = 1;           
+      
+      LOGI("Button Pressed! Breathing Mode: %d\r\n", breathing_mode);
+
+      // 4. 死区滞回：等待按键彻底松开，防止长按导致的连续误触发
+      while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
+      {
+        taskdelay(10);
+      }
+      taskdelay(20); // 松手消抖
+    }
+  }
+}
+
+// =========================================================================
+// 3. 改造后的 PWM 任务 (支持状态打断)
+// 原理：在每次调整占空比前读取全局状态，如果模式改变，立即 break 跳出循环
+// =========================================================================
+void pwmtask(void *arg)
+{
+  while (1)
+  {
+    if (breathing_mode == 1)
+    {
+      // --- 呼吸模式 ---
+      for (int i = 0; i < 100; i++)
+      {
+        // 关键逻辑：如果在渐变中途按下按键，立刻跳出循环，防止响应迟钝
+        if (breathing_mode == 0) break; 
+        
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, i);
+        taskdelay(10);
+      }
+      for (int i = 0; i < 100; i++)
+      {
+        if (breathing_mode == 0) break;
+        
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 100 - i);
+        taskdelay(10);
+      }
+    }
+    else
+    {
+      // --- 常亮模式 ---
+      // 将 CCR 设置为 100 (100% 占空比)
+      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 100);
+      
+      // 挂起自身让出 CPU，避免 while(1) 疯狂空转导致其他任务饥饿
+      taskdelay(50); 
+    }
+  }
 }
 /* USER CODE END 0 */
 
@@ -261,13 +340,14 @@ int main(void)
   MX_DMA_Init();
   MX_USART2_UART_Init();
   MX_IWDG_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
 
   char *msg = "\r\n--- RTOS System Starting ---\r\n";
   HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
   HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
-
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   // 1. 初始化系统核心与内存
   my_os_heap_init();
 
@@ -280,7 +360,9 @@ int main(void)
   TaskCreate(PrintTask_Entry, NULL, 3, (unsigned char *)"PrintTask");
   TaskCreate(Task1_Entry, task, 2, (unsigned char *)"Task1");
   TaskCreate(Task2_Entry, NULL, 2, (unsigned char *)"Task2");
-  TaskCreate(ledtask,NULL, 2, (unsigned char *)"LedTask");
+  TaskCreate(ledtask, NULL, 2, (unsigned char *)"LedTask");
+  TaskCreate(pwmtask, NULL, 3, (unsigned char *)"PwmTask");
+  //TaskCreate(GenericButtonTask_Entry, NULL, 2, (unsigned char *)"GenericButtonTask");
   // 4. 启动调度器，系统接管 CPU 控制权
   StartScheduler();
   /* USER CODE END 2 */
@@ -353,7 +435,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
   if (GPIO_Pin == GPIO_PIN_10)
   {
     // 路径终点：一旦产生硬件中断，立刻给信号量，唤醒任务
-    SemaphoreGive(ButtonSem); 
+    SemaphoreGive(ButtonSem);
   }
 }
 

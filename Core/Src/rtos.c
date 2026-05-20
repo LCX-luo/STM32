@@ -463,7 +463,16 @@ void StartScheduler(void)
 
     // 2. 创建内部任务。此时因为中断关闭，里面的串口打印绝对安全
     TaskCreate(IdleTask_Entry, NULL,0, (unsigned char *)"OS_Idle");
-
+// 2. 创建内部任务。增加严格的返回值校验！
+    TaskList* idle_task = TaskCreate(IdleTask_Entry, NULL,0, (unsigned char *)"OS_Idle");
+    
+    // 如果由于堆内存不足导致空闲任务创建失败，直接在此处将系统宕机锁死，防止引发不可控的连环崩溃
+    if (idle_task == NULL) {
+        __disable_irq();
+        while(1) {
+            // 在实际工业产品中，这里可以点亮一个红灯，或者向串口直喷一个 "OOM Error"
+        }
+    }
     // （可选：加了换行符，终端才能立刻显示）
     char *msg = "time=0\r\n";
     HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);

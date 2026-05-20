@@ -8,7 +8,7 @@
 /************************ 宏定义 ************************/
 #define Max_PRIORITY 16
 #define TASK_NAME_MAX_LENGTH 10
-#define RTOS_HEAP_SIZE 8192
+#define RTOS_HEAP_SIZE 12288
 #define TASK_DEFAULT_STACK_SIZE 256
 #define WDG_TIMEOUT_MS 9000 // 软件看门狗超时时间配置为9s
 /************************ 任务状态枚举定义 ************************/
@@ -69,7 +69,7 @@ void resumeTask(TaskList *task);
 Semaphore_t* SemaphoreCreate(unsigned char initialCount);
 void SemaphoreTake(Semaphore_t *sem);
 void SemaphoreGive(Semaphore_t *sem);
-#endif /* __RTOS_H */
+
 
 
 
@@ -107,3 +107,4 @@ typedef struct
 Queue_t* QueueCreate(unsigned int maxItems, unsigned int itemSize);
 uint8_t QueueSend(Queue_t *queue, void *item);
 uint8_t QueueReceive(Queue_t *queue, void *buffer);
+#endif /* __RTOS_H */
