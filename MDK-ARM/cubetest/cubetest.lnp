@@ -10,6 +10,7 @@
 "cubetest\stm32f1xx_it.o"
 "cubetest\stm32f1xx_hal_msp.o"
 "cubetest\stm32f1xx_hal_timebase_tim.o"
+"cubetest\flash_update_1.o"
 "cubetest\stm32f1xx_hal_gpio_ex.o"
 "cubetest\stm32f1xx_hal_tim.o"
 "cubetest\stm32f1xx_hal_tim_ex.o"

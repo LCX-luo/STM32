@@ -54,8 +54,57 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-#define APP_START_ADDRESS  0x08004000
+#define APP_START_ADDRESS  0x08002000     // App 起始地址（28KB）
+#define STAGING_ADDR       0x08009000     // Staging 起始地址（28KB）
+#define STAGING_SIZE       0x00007000
+#define APP_SIZE           0x00007000
+#define FLAG_PAGE_ADDR     0x08001C00     // 标志位页（独立第7页）
+#define UPDATE_FLAG_ADDR   0x08001FFC     // 标志位地址
+#define MAGIC_UPDATE_READY 0xA5A5A5A5
+
 typedef void (*pFunction)(void);
+
+/**
+  * @brief 搬运新固件：擦 App → 拷贝 Staging → 清理
+  */
+static void copy_new_firmware(void)
+{
+    uint32_t word, src, dst;
+    uint32_t page_error = 0;
+    FLASH_EraseInitTypeDef erase = {0};
+
+    HAL_FLASH_Unlock();
+
+    /* 1. 擦除 App 区域 (28KB = 28 页) */
+    erase.TypeErase = FLASH_TYPEERASE_PAGES;
+    erase.PageAddress = APP_START_ADDRESS;
+    erase.NbPages = 28;
+    if (HAL_FLASHEx_Erase(&erase, &page_error) != HAL_OK) {
+        while(1);  // 擦除失败，死机保护
+    }
+
+    /* 2. 从 Staging 逐字拷贝到 App（拷贝全部 28KB，不跳过 0xFFFFFFFF）*/
+    for (uint32_t offset = 0; offset < STAGING_SIZE; offset += 4) {
+        src = STAGING_ADDR + offset;
+        dst = APP_START_ADDRESS + offset;
+        word = *(__IO uint32_t*)src;
+        if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, dst, word) != HAL_OK) {
+            while(1);
+        }
+    }
+
+    /* 3. 擦除 Staging 区 (28 页) */
+    erase.PageAddress = STAGING_ADDR;
+    erase.NbPages = 28;
+    HAL_FLASHEx_Erase(&erase, &page_error);
+
+    /* 4. 擦除标志位页 (第7页，独立页) */
+    erase.PageAddress = FLAG_PAGE_ADDR;
+    erase.NbPages = 1;
+    HAL_FLASHEx_Erase(&erase, &page_error);
+
+    HAL_FLASH_Lock();
+}
 /* USER CODE END 0 */
 
 /**
@@ -88,16 +137,24 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   /* USER CODE BEGIN 2 */
-uint32_t app_stack_pointer = *(__IO uint32_t*)APP_START_ADDRESS;
+    // === check update flag ===
+    uint32_t magic = *(__IO uint32_t*)UPDATE_FLAG_ADDR;
+    if (magic == MAGIC_UPDATE_READY) {
+        copy_new_firmware();
+    }
 
-if ((app_stack_pointer & 0x2FFE0000) == 0x20000000)
-{
-    __disable_irq(); // ���ж�
-    uint32_t app_reset_handler = *(__IO uint32_t*)(APP_START_ADDRESS + 4);
-    pFunction JumpToApp = (pFunction)app_reset_handler;
-    __set_MSP(app_stack_pointer); // ���ö�ջָ��
-    JumpToApp(); // ��ɣ�
-}
+    // === jump to app ===
+    uint32_t app_stack_pointer = *(__IO uint32_t*)APP_START_ADDRESS;
+
+    if ((app_stack_pointer & 0x2FFE0000) == 0x20000000)
+    {
+        __disable_irq();
+        uint32_t app_reset_handler = *(__IO uint32_t*)(APP_START_ADDRESS + 4);
+        pFunction JumpToApp = (pFunction)app_reset_handler;
+        SCB->VTOR = APP_START_ADDRESS;
+        __set_MSP(app_stack_pointer);
+        JumpToApp();
+    }
   /* USER CODE END 2 */
 
   /* Infinite loop */

@@ -22,6 +22,7 @@
 #include "stm32f1xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "flash_update.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -60,7 +61,8 @@ extern UART_HandleTypeDef huart2;
 extern TIM_HandleTypeDef htim1;
 
 /* USER CODE BEGIN EV */
-
+extern RingBuffer_t g_rx_ring;    // FOTA 任务的 Ring Buffer（定义在 flash_update.c）
+extern uint8_t g_rx_byte;         // FOTA 任务的单字节接收缓冲
 /* USER CODE END EV */
 
 /******************************************************************************/
@@ -231,5 +233,18 @@ void EXTI15_10_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+
+/**
+  * @brief  UART RX 接收完成回调（每收到 1 字节触发）
+  * @note   只写 Ring Buffer，不调用任何 RTOS 函数（避免中断中 __enable_irq 问题）
+  */
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART2)
+    {
+        RingBuffer_Write(&g_rx_ring, g_rx_byte);
+        HAL_UART_Receive_IT(&huart2, &g_rx_byte, 1);  // 重新使能接收
+    }
+}
 
 /* USER CODE END 1 */

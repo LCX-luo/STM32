@@ -38,3 +38,4 @@ cubetest\main.o: D:\keil\ARM\ARMCC\Bin\..\include\stdio.h
 cubetest\main.o: D:\keil\ARM\ARMCC\Bin\..\include\string.h
 cubetest\main.o: D:\keil\ARM\ARMCC\Bin\..\include\stdarg.h
 cubetest\main.o: ../Core/Src/rtos.h
+cubetest\main.o: ../Core/Inc/flash_update.h

@@ -20,6 +20,7 @@
 #include <string.h>
 #include <stdarg.h> // 为了使用 va_list
 #include "rtos.h"   // 引入自定义 RTOS 系统
+#include "flash_update.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -28,6 +29,7 @@
 typedef struct
 {
   char text[128]; // 确保有足够容量容纳时间戳和可变参数
+  uint16_t len;   // 实际发送长度（支持二进制帧）
 } LogMsg_t;
 /* USER CODE END PTD */
 
@@ -61,6 +63,7 @@ void Task3_Entry(void *arg);
 void badtask(void *arg);
 uint8_t my_itoa(unsigned int num, char *str);
 void LOGI(const char *format, ...);
+void FlashUpdateTask_Entry(void *arg);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -116,8 +119,11 @@ void LOGI(const char *format, ...)
 
   va_list args;
   va_start(args, format);
-  vsnprintf(&txMsg.text[timestamp_len], remain_len, format, args);
+  int msg_len = vsnprintf(&txMsg.text[timestamp_len], remain_len, format, args);
   va_end(args);
+
+  if (msg_len < 0) return;
+  txMsg.len = timestamp_len + msg_len;  // 记录实际长度，让 PrintTask 用
 
   QueueSend(PrintQueue, &txMsg);
 }
@@ -132,7 +138,7 @@ void PrintTask_Entry(void *arg)
   {
     SemaphoreTake(DmaTxSem);
     QueueReceive(PrintQueue, &rxMsg);
-    HAL_UART_Transmit_DMA(&huart2, (uint8_t *)rxMsg.text, strlen(rxMsg.text));
+    HAL_UART_Transmit_DMA(&huart2, (uint8_t *)rxMsg.text, rxMsg.len);
   }
 }
 
@@ -202,7 +208,29 @@ void badtask(void *arg)
   }
 }
 /**
- * @brief 按键扫描任务：切换呼吸模式 + 同步控制 PB5 LED
+ * @brief 按键任务（FOTA 测试版）：仅控制 PB5，不干扰呼吸
+ * @note  编译时添加 FOTA_DEMO_NEW 宏启用
+ */
+#ifdef FOTA_DEMO_NEW
+void ledtask(void *arg)
+{
+  while (1)
+  {
+    SemaphoreTake(ButtonSem);
+    taskdelay(20);
+    if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
+    {
+      HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5);
+      LOGI("PB5 Toggle\r\n");
+      while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
+        taskdelay(10);
+      taskdelay(20);
+    }
+  }
+}
+#else
+/**
+ * @brief 按键扫描任务（原版）：切换呼吸模式 + 同步控制 PB5 LED
  * @note  按一下呼吸灯启动 + PB5 点亮，再按一下呼吸灯关闭 + PB5 熄灭
  */
 void ledtask(void *arg)
@@ -241,6 +269,7 @@ void ledtask(void *arg)
     }
   }
 }
+#endif
 
 // =========================================================================
 // 2. 全新通用按键事件分发任务 (替代原本的 ledtask)
@@ -373,6 +402,8 @@ int main(void)
   TaskCreate(ledtask, NULL, 2, (unsigned char *)"LedTask");
   TaskCreate(pwmtask, NULL, 3, (unsigned char *)"PwmTask");
   //TaskCreate(GenericButtonTask_Entry, NULL, 2, (unsigned char *)"GenericButtonTask");
+  // 5. 在线升级 FOTA 任务（最低用户优先级 1，后台运行）
+  TaskCreate(FlashUpdateTask_Entry, NULL, 1, (unsigned char *)"FlashUpd");
   // 4. 启动调度器，系统接管 CPU 控制权
   StartScheduler();
   /* USER CODE END 2 */
