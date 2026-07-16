@@ -1,1 +1,34 @@
-.kagent/
+# Keil MDK-ARM build output
+MDK-ARM/*.axf
+MDK-ARM/*.bin
+MDK-ARM/*.hex
+MDK-ARM/*.htm
+MDK-ARM/*.map
+MDK-ARM/*.dep
+MDK-ARM/*.crf
+MDK-ARM/*.o
+MDK-ARM/*.d
+MDK-ARM/*.lst
+MDK-ARM/*.lnp
+MDK-ARM/cubetest/
+
+# Bootloader build output
+My_bootloader/MDK-ARM/My_bootloader/*.o
+My_bootloader/MDK-ARM/My_bootloader/*.d
+My_bootloader/MDK-ARM/My_bootloader/*.crf
+My_bootloader/MDK-ARM/My_bootloader/*.dep
+My_bootloader/MDK-ARM/My_bootloader/*.axf
+My_bootloader/MDK-ARM/My_bootloader/*.bin
+My_bootloader/MDK-ARM/My_bootloader/*.hex
+My_bootloader/MDK-ARM/My_bootloader/*.htm
+My_bootloader/MDK-ARM/My_bootloader/*.map
+
+# IDE
+*.uvguix.*
+*.uvoptx
+DebugConfig/
+
+# Python
+__pycache__/
+*.pyc
+!MDK-ARM/cubetest/cubetest.sct

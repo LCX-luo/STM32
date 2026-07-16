@@ -1,112 +1,120 @@
-# Custom STM32 RTOS 🚀
+# Custom STM32 RTOS + FOTA 🚀
 
-本项目是一个从零手写、专为 ARM Cortex-M3 (STM32F1系列) 打造的轻量级抢占式实时操作系统 (RTOS)。结合了 STM32CubeMX 生成的 HAL 库底层驱动，实现了一套包含任务调度、内存管理、进程间通信(IPC)以及高可靠性异常保护的嵌入式软件架构。
+从零手写的轻量级抢占式实时操作系统，配合自定义 Bootloader，实现了一套完整的**固件在线升级 (FOTA)** 方案。
 
-## ✨ 核心特性 (Core Features)
+**硬件平台**：STM32F103C8T6 (ARM Cortex-M3, 64KB Flash, 20KB SRAM)  
+**开发环境**：Keil MDK-ARM V5 (ARMCC V5.06) + STM32CubeMX HAL  
+**上位机**：Python 3 + tkinter + PySerial
 
-### 1. 抢占式任务调度 (Preemptive Scheduler)
+---
 
-- **多优先级支持**：支持最多 16 个任务优先级 (`Max_PRIORITY`)，高优先级任务可瞬间抢占低优先级任务。
-- **状态机流转**：完整实现了任务的就绪 (READY)、运行 (RUNNING)、阻塞 (BLOCKED)、挂起 (SUSPEND) 和删除回收 (DELETE) 状态流转。
-- **底层上下文切换**：基于 ARM Cortex-M3 的 `PendSV` 异常与汇编级堆栈操控，实现极低延迟的任务切换。
+## ✨ 核心特性
 
-### 2. 丰富的进程间通信 (IPC & Synchronization)
+### 1. 自定义 RTOS 内核
 
-- **互斥锁 (Mutex)**：内置 **优先级继承协议 (PIP, Priority Inheritance Protocol)**，完美解决经典 RTOS 中的优先级翻转 (Priority Inversion) 问题。
-- **二值信号量 (Binary Semaphore)**：支持中断唤醒与任务间同步。
-- **消息队列 (Message Queue)**：基于环形缓冲区 (Ring Buffer) 设计，支持跨任务的数据安全搬运。
+| 特性 | 实现 |
+|------|------|
+| **抢占式调度** | 16 级优先级，PendSV 汇编级上下文切换 |
+| **任务状态机** | READY/RUNNING/BLOCKED/SUSPEND/DELETE 五态流转 |
+| **IPC** | 二值信号量、互斥锁(优先级继承 PIP)、消息队列(环形缓冲) |
+| **内存管理** | Best-fit 动态分配器，12KB 独立堆，支持合并 |
+| **看门狗** | 软件 WDT (9s) + 硬件 IWDG (300ms) 双保险 |
+| **异步日志** | `LOGI()` → 消息队列 → PrintTask → DMA UART 发送，业务任务零阻塞 |
 
-### 3. 高级应用框架 (Advanced Application Framework)
-
-- **异步日志系统 (`LOGI`)**：类似 Linux `syslog`。业务任务只需调用 `LOGI("var: %d", x)`，字符串解析与组装在任务局部栈完成，并通过消息队列发往专门的 `PrintTask`，由 **DMA 硬件后台完成 UART 发送**，实现业务任务 0 阻塞。
-- **工业级按键状态机**：内置抗机械抖动、边沿触发（屏蔽长按重复触发）的非阻塞按键扫描逻辑，完全释放 CPU 算力。
-
-### 4. 健壮的系统保护机制 (System Robustness)
-
-- **独立堆内存分配器**：实现了一套无碎片的动态内存分配与回收算法 (`my_os_malloc` / `my_os_free`)。
-- **软件看门狗 (SW WDT)**：`IdleTask` 负责喂狗。一旦检测到高优任务死锁或 CPU 饥饿，看门狗在 `SysTick` 中断内触发。
-- **硬核遗言打印**：看门狗超时后，**绕过 HAL 库状态锁**，直接轮询 MCU 硬件寄存器 (UART `TXE` / `TC`) 发送导致卡死的任务名称，随后触发 `NVIC_SystemReset()` 硬件复位。
-
-------
-
-## 📂 目录结构 (Directory Structure)
-
-项目基于标准的 STM32CubeMX 目录规范与 Keil MDK-ARM 构建：
-
-Plaintext
+### 2. FOTA 在线升级
 
 ```
-├── Core/
+Bootloader (7KB)    App (28KB)    Staging Area (28KB)    Flag (1KB)
+0x08000000          0x08002000    0x08009000              0x08001C00
+```
+
+- App 和 Staging 等大(28KB)，确保任意版本固件都能完整暂存
+- 更新标志位独占一个 Flash 页，擦写时零风险触碰 Bootloader
+- Bootloader 从 16KB 压缩到 7KB，释放空间给业务代码
+
+### 3. PC 上位机
+
+- Python + tkinter 原生 GUI，毫秒级时间戳终端
+- CRC16 帧校验 + CRC32 文件校验 + 3 次超时重传
+- 升级数据全部走 MCU 端 PrintQueue 通道，与日志输出无冲突
+
+---
+
+## 🔧 项目结构
+
+```
+├── Core/                    # RTOS 内核 + 业务代码
 │   ├── Inc/
 │   │   ├── main.h
-│   │   └── rtos.h         # RTOS 核心数据结构与 API 声明
+│   │   └── flash_update.h   # FOTA 协议定义 + Ring Buffer API
 │   └── Src/
-│       ├── main.c         # 业务逻辑、任务入口与外设初始化
-│       └── rtos.c         # RTOS 内核实现 (调度器、链表操作、汇编切换)
-├── Drivers/
-│   ├── CMSIS/             # ARM Cortex-M 核心文件
-│   └── STM32F1xx_HAL_Driver/ # ST 官方 HAL 库
-├── MDK-ARM/
-│   └── cubetest.uvprojx   # Keil MDK 工程文件
+│       ├── main.c           # 业务任务 + LOGI + PrintTask
+│       ├── rtos.c           # 调度器 / IPC / 内存管理 / 汇编切换
+│       ├── rtos.h           # RTOS 核心数据结构和 API
+│       └── flash_update.c   # FOTA 任务：帧解析 / CRC / Flash 驱动
+├── My_bootloader/           # Bootloader 项目
+│   └── Core/Src/main.c      # 更新标志检测 + Flash 搬运
+├── PC_Tool/
+│   ├── fw_updater.py        # 上位机主程序
+│   └── protocol.py          # 协议编解码
+├── 项目报告.md              # 完整的开发记录（含 10 个 Bug 排查实录）
 └── README.md
 ```
 
-------
+---
 
-## 🛠️ 环境依赖 (Dependencies)
+## 🧠 本项目记录的 10 个 Bug 排查（详见`项目报告.md`）
 
-- **硬件目标**: STM32F103C8T6 (或任意 STM32F1 系列单片机)
-- **开发环境**: Keil uVision 5 (MDK-ARM)
-- **底层库**: STM32 HAL Driver (通过 STM32CubeMX 生成)
-- **编译器**: ARMCC (V5.06)
+| # | Bug | 根因 |
+|--|-----|------|
+| 1 | IROM 设置"没改成功" | 器件级描述和链接器配置是不同 XML 字段 |
+| 2 | Bootloader 跳转后 HardFault | SysTick 残留 + HAL_RCC 意外开中断 |
+| 3 | 标志位擦坏 Bootloader | 标志位没独占 Flash 页 |
+| 4 | 擦除期间看门狗复位 | 每页 30ms 锁 Flash 总线，IWDG 300ms 饿死 |
+| 5 | 按键后 HardFault | FOTA 任务 2KB 缓冲区在 1KB 栈上溢出 |
+| 6 | PKT_READY 发不出 | DMA 和 PrintTask 抢 UART，HAL 返回 BUSY |
+| 7 | PKT_ACK 收不到 | `HAL_UART_Receive_IT` 从未被首次调用 |
+| 8 | 升级后 HardFault | Bootloader 把 `0xFFFFFFFF` 当"数据结束" |
+| 9 | RTOS 适配差异 | SemaphoreGive ISR 不安全、无软定时器等 |
+| 10 | 传输期间按键无响应 | `write_flash_buffer` 连续 512 次 `__disable_irq` |
 
-------
+---
 
-## 🚀 快速上手 (Quick Start)
+## 🚀 快速开始
 
-### 1. 任务创建与系统点火
+### 1. 构建
 
-在 `main.c` 中，初始化硬件后，分配内存并创建任务，最后启动调度器：
+```bash
+# Bootloader
+打开 My_bootloader/MDK-ARM/My_bootloader.uvprojx → Rebuild All → Flash Download
 
-C
-
-```
-// 初始化 RTOS 堆内存与 IPC
-my_os_heap_init();
-PrintQueue = QueueCreate(10, sizeof(LogMsg_t));
-
-// 创建任务：函数指针, 传入参数, 优先级(数字越大优先级越高), 任务名
-TaskCreate(Task1_Entry, NULL, 2, (unsigned char *)"Task1");
-TaskCreate(PrintTask_Entry, NULL, 3, (unsigned char *)"PrintTask");
-
-// 启动调度器 (将接管 CPU，不再返回)
-StartScheduler();
-```
-
-### 2. 使用异步日志系统
-
-在任意业务任务中，就像使用 `printf` 一样使用 `LOGI`，系统会自动附带时间戳并交由后台 DMA 发送，绝对不会卡顿当前任务：
-
-C
-
-```
-void Task1_Entry(void *arg)
-{
-    int loop_count = 0;
-    while (1)
-    {
-        loop_count++;
-        // 自动输出例如: "[1000] Task1 is running, count: 1"
-        LOGI("Task1 is running, count: %d\r\n", loop_count);
-        
-        taskdelay(1000); // RTOS 非阻塞延时
-    }
-}
+# App
+打开 MDK-ARM/cubetest.uvprojx → Rebuild All → Flash Download
+# 编译后自动生成 MDK-ARM/cubetest/cubetest.bin
 ```
 
-------
+### 2. 串口接线
 
-## 🧠 设计架构图解 (Architecture Notes)
+```
+STM32 PA2 (TX) ←→ USB-TTL RX
+STM32 PA3 (RX) ←→ USB-TTL TX
+GND ←→ GND
+115200-8N1
+```
 
-- **双向链表管理**: 内核维护了 `readyList[]` (就绪数组)、`blockedlist` (阻塞链表)、`suspendlist` (挂起链表) 等，通过统一的 `taskMoveInReady` 和 `taskMoveOutList` 实现 O(1) 或 O(N) 的任务状态拔插。
-- **空闲任务回收**: 处于 `DELETE` 状态的任务不会立刻释放内存，而是移交给系统最低优先级的 `OS_Idle` 任务进行内存安全回收，防止在临界区内进行耗时的内存释放操作。
+### 3. FOTA 升级
+
+```bash
+pip install pyserial
+python PC_Tool/fw_updater.py
+# 打开串口 → 选择 .bin → 开始升级
+```
+
+---
+
+## 📌 已知约束
+
+- `SemaphoreGive` 不能在 ISR 中调用（会意外 `__enable_irq`）
+- `TaskDelete(NULL)` 不删除自身
+- 无软件定时器（协议超时使用 `taskdelay` 累加计数）
+- 消息队列仅 10 槽（FOTA 进度每 4KB 输出一次，避免刷屏）

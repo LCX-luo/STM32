@@ -246,12 +246,21 @@ void erase_staging_area(void)
 
 void write_flash_buffer(uint32_t dst_addr, const uint8_t *data, uint16_t len)
 {
+    uint16_t word_count = 0;
     HAL_FLASH_Unlock();
     for (uint16_t i = 0; i < len; i += 4) {
         uint32_t word;
         memcpy(&word, data + i, 4);
         if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, dst_addr + i, word) != HAL_OK) {
             LOGI("FOTA: Flash write fail @ 0x%08X\r\n", dst_addr + i);
+        }
+        /* 每 128 个字(~5.8ms)刷新看门狗并让出 CPU，
+         * 给按键/呼吸灯等任务执行机会 */
+        word_count++;
+        if (word_count >= 128) {
+            word_count = 0;
+            HAL_IWDG_Refresh(&hiwdg);
+            taskdelay(3);
         }
     }
     HAL_FLASH_Lock();
@@ -314,10 +323,13 @@ void FlashUpdateTask_Entry(void *arg)
 
     FrameParser_Init();
 
+    uint16_t yield_counter = 0;  /* 处理一批字节后主动让出 CPU */
+
     while (receiving) {
         uint8_t byte;
         if (RingBuffer_Read(&g_rx_ring, &byte)) {
             ready_resend = 0;  /* 收到数据就重置计数器 */
+            yield_counter++;
             FrameParser_Feed(byte, &frame);
 
             if (frame.complete) {
@@ -394,6 +406,17 @@ void FlashUpdateTask_Entry(void *arg)
                     send_packet(PKT_NAK, (const uint8_t[]){ERR_UNKNOWN}, 1, 0);
                     break;
                 }
+            }
+
+            /*
+             * 每处理约 80 字节后主动让出 CPU + 刷看门狗。
+             * 传输期间 Ring Buffer 几乎不空→taskdelay(5) 走不到，
+             * 不主动让步会导致按键任务（优先级 2）长时间得不到执行。
+             */
+            if (yield_counter >= 80) {
+                yield_counter = 0;
+                HAL_IWDG_Refresh(&hiwdg);
+                taskdelay(3);
             }
         } else {
             /* 每 ~3 秒重发一次 READY（方便 PC 工具随时连接）*/
