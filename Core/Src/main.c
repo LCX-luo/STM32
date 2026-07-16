@@ -202,7 +202,8 @@ void badtask(void *arg)
   }
 }
 /**
- * @brief 工业级按键扫描任务 (含消抖与边沿触发逻辑)
+ * @brief 按键扫描任务：切换呼吸模式 + 同步控制 PB5 LED
+ * @note  按一下呼吸灯启动 + PB5 点亮，再按一下呼吸灯关闭 + PB5 熄灭
  */
 void ledtask(void *arg)
 {
@@ -211,16 +212,25 @@ void ledtask(void *arg)
     // 1. 等待信号量。没有按键时，任务处于 BLOCKED 状态，不消耗算力
     SemaphoreTake(ButtonSem);
 
-    // 2. 既然走到了这里，说明 EXTI 触发了。
-    // 为了和原本功能一致，进行软件消抖：
+    // 2. 软件消抖
     taskdelay(20);
 
     // 3. 再次确认电平（过滤电磁干扰）
     if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
     {
-      // 执行原本的逻辑
-      HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5);
-      LOGI("Button Pressed by EXTI! LED Toggled.\r\n");
+      // 切换呼吸模式
+      breathing_mode = !breathing_mode;
+
+      if (breathing_mode)
+      {
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);   // PB5 点亮
+        LOGI("Button: Breathing ON, PB5 ON\r\n");
+      }
+      else
+      {
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET); // PB5 熄灭
+        LOGI("Button: Breathing OFF, PB5 OFF\r\n");
+      }
 
       // 4. 等待松开逻辑保持不变
       while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
@@ -283,7 +293,7 @@ void pwmtask(void *arg)
       for (int i = 0; i < 100; i++)
       {
         // 关键逻辑：如果在渐变中途按下按键，立刻跳出循环，防止响应迟钝
-        if (breathing_mode == 0) break; 
+        if (breathing_mode == 0) break;
         
         __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, i);
         taskdelay(10);
@@ -298,12 +308,12 @@ void pwmtask(void *arg)
     }
     else
     {
-      // --- 常亮模式 ---
-      // 将 CCR 设置为 100 (100% 占空比)
-      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 100);
+      // --- 关闭模式 ---
+      // 将 CCR 设置为 0 (0% 占空比，LED 熄灭)
+      __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
       
       // 挂起自身让出 CPU，避免 while(1) 疯狂空转导致其他任务饥饿
-      taskdelay(50); 
+      taskdelay(50);
     }
   }
 }

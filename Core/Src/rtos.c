@@ -498,6 +498,14 @@ void StartScheduler(void)
 void SysTick_Handler(void)
 {
     HAL_IncTick();
+    // ==========================================
+    // 【核心修复】：如果 RTOS 还没有点火启动，立刻滚回去！
+    // 绝对不允许往下执行任何与任务调度相关的逻辑
+    // ==========================================
+    if (OS_Running == 0)
+    {
+        return; 
+    }
     OsRunningTime_ms++;
     sw_wdg_counter++; // 软件看门狗计数增加
     HAL_IWDG_Refresh(&hiwdg); // 中断看门狗刷新
