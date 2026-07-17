@@ -8,6 +8,7 @@
 
 
 // ǰϵͳڲĿ
+/* IdleTask (priority 0): Feeds SW watchdog, reclaims deleted task memory. */
 static void IdleTask_Entry(void* arg);
 
 /************************ ȫֱ ************************/
@@ -94,12 +95,12 @@ void *my_os_malloc(uint32_t size)
         else freeListHead = new_free;
         best->size = total_size;
     }
-    else
+        else
     {
         if (best->prev) best->prev->next = best->next;
         else freeListHead = best->next;
         if (best->next) best->next->prev = best->prev;
-    }
+}
 
     best->next = NULL;
     best->prev = NULL;
@@ -139,13 +140,14 @@ void my_os_free(void *ptr)
         prev->size += block->size;
         prev->next = block->next;
         if (block->next) block->next->prev = prev;
-    }
+}
 
     __enable_irq();
 }
 
 /************************  ************************/
 
+/* taskMoveInReady: Insert task into readyList, update bitmap. VIP path for preemption. */
 void taskMoveInReady(TaskList *newTask)
 {   
     if (newTask == NULL) {
@@ -178,7 +180,7 @@ void taskMoveInReady(TaskList *newTask)
                 
                 // VIP רָоλҪ˫ֱӷ
                 return; 
-            }
+    }
         }
     }
 
@@ -206,6 +208,7 @@ void taskMoveInReady(TaskList *newTask)
 }
 
 // ͳһժٽʹã
+/* taskMoveOutList: Remove task from its current list. Update bitmap if READY list goes empty. */
 void taskMoveOutList(TaskList *task)
 {
     if (task == NULL)
@@ -218,10 +221,10 @@ void taskMoveOutList(TaskList *task)
         return;
 
     if (state == READY)
-    {
+        {
         // ѭ˫
         if (task->next == task)
-        {
+            {
             readyList[task->taskTCB.priority] = NULL;
             os_ready_bitmap &= ~(1 << task->taskTCB.priority);
         }
@@ -230,13 +233,13 @@ void taskMoveOutList(TaskList *task)
             if (readyList[task->taskTCB.priority] == task)
             {
                 readyList[task->taskTCB.priority] = task->next;
-            }
+    }
             task->prev->next = task->next;
             task->next->prev = task->prev;
         }
-    }
+        }
     else if (state == BLOCKED || state == SUSPEND)
-    {
+        {
         // ˫
         if (task->prev != NULL)
         {
@@ -254,7 +257,7 @@ void taskMoveOutList(TaskList *task)
         {
             task->next->prev = task->prev;
         }
-    }
+}
 
     task->prev = NULL;
     task->next = NULL;
@@ -263,6 +266,7 @@ void taskMoveOutList(TaskList *task)
 /************************ ڲϵͳ ************************/
 
 // ϵͳר̨ (ȼ)
+/* IdleTask (priority 0): Feeds SW watchdog, reclaims deleted task memory. */
 static void IdleTask_Entry(void* arg)
 {
     while (1)
@@ -274,12 +278,12 @@ static void IdleTask_Entry(void* arg)
 
         // 2. ǷҪʬ
         __disable_irq();
-        if (tasksWaitingTermination != NULL)
-        {
+            if (tasksWaitingTermination != NULL)
+            {
             toDelete = tasksWaitingTermination;
             tasksWaitingTermination = toDelete->next;
             if (tasksWaitingTermination != NULL)
-            {
+        {
                 tasksWaitingTermination->prev = NULL;
             }
         }
@@ -290,7 +294,7 @@ static void IdleTask_Entry(void* arg)
         {
             my_os_free(toDelete->taskTCB.stack_base);
             my_os_free(toDelete);
-        }
+    }
 
         // 4. ѡƬ͹ģʽ
         // __WFI();
@@ -300,6 +304,53 @@ static void IdleTask_Entry(void* arg)
 /************************  API ************************/
 
 // ޸ rtos.h е
+/*
+ * TaskCreate — Initialize fake stack frame for a new task
+ *
+ * Stack layout after init (high to low):
+ *     +------------------+  <- stack_ptr initially here
+ *     |      xPSR        |  0x01000000 (Thumb bit)
+ *     +------------------+
+ *     |      PC          |  taskFunction address
+ *     +------------------+
+ *     |      LR          |  0xFFFFFFFD
+ *     +------------------+
+ *     |      R12         |  0
+ *     +------------------+
+ *     |      R3 - R0     |  R0 = arg (task parameter)
+ *     +------------------+
+ *     |      R11 - R4    |  all 0
+ *     +------------------+  <- PSP when PendSV first runs
+ *
+ * On first PendSV, PSP==0 -> skip save, call TaskSwitch directly.
+ * TaskSwitch picks this task -> LDMIA restores R4-R11 ->
+ * BX LR -> hardware unstack -> PC = taskFunction -> task starts.
+ */
+
+/*
+ * TaskCreate — Initialize fake stack frame for a new task
+ *
+ * Stack layout after init (high to low):
+ *     +------------------+  <- stack_ptr initially here
+ *     |      xPSR        |  0x01000000 (Thumb bit)
+ *     +------------------+
+ *     |      PC          |  taskFunction address
+ *     +------------------+
+ *     |      LR          |  0xFFFFFFFD
+ *     +------------------+
+ *     |      R12         |  0
+ *     +------------------+
+ *     |      R3 - R0     |  R0 = arg (task parameter)
+ *     +------------------+
+ *     |      R11 - R4    |  all 0
+ *     +------------------+  <- PSP when PendSV first runs
+ *
+ * On first PendSV, PSP==0 -> skip save, call TaskSwitch directly.
+ * TaskSwitch picks this task -> LDMIA restores R4-R11 ->
+ * BX LR -> hardware unstack -> PC = taskFunction -> task starts.
+ */
+
+/* 创建任务: 分配 TCB+栈, 初始化异常帧 (见 PendSV 栈图) | Create new task */
 TaskList *TaskCreate(void (*taskFunction)(void *), void *arg, unsigned int priority, unsigned char *TaskName)
 {
     if (taskFunction == NULL || priority >= Max_PRIORITY)
@@ -352,15 +403,16 @@ TaskList *TaskCreate(void (*taskFunction)(void *), void *arg, unsigned int prior
     char *msg = "createtask\r\n";
     HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
     return newTask;
-}
+    }
 
+/* TaskSwitch: Select next task to run. Uses O(1) bitmap + CLZ for priority lookup. */
 void TaskSwitch(void)
 {   
     __disable_irq();
     if (next_task_ptr != NULL)
     {
         if (runninglist != NULL)
-        {
+    {
             // ֻбռŷŻؾó״̬RUNNING
             if (runninglist->taskTCB.task_state == RUNNING)
             {
@@ -378,14 +430,14 @@ void TaskSwitch(void)
     int highest_ready_prio = -1;
     if (os_ready_bitmap != 0) {
         highest_ready_prio = 31 - __clz((uint32_t)os_ready_bitmap);
-    }
+        }
 
     if (highest_ready_prio == -1){
         __enable_irq();
          return;
     }
        
-
+       
     if (runninglist != NULL && runninglist->taskTCB.task_state == RUNNING)
     {
         if (runninglist->taskTCB.priority > highest_ready_prio){
@@ -393,7 +445,7 @@ void TaskSwitch(void)
             return ;
         }
             
-
+            
         runninglist->taskTCB.task_state = READY;
         taskMoveInReady(runninglist);
     }
@@ -405,10 +457,40 @@ void TaskSwitch(void)
     __enable_irq();
 }
 
-extern void TaskSwitch(void);
+
+/* TaskSwitch: Select next task to run. Uses O(1) bitmap + CLZ for priority lookup. */
+void TaskSwitch(void);
 extern TaskList *runninglist;
 
 #ifndef __INTELLISENSE__
+/*
+ * Cortex-M3 PendSV_Handler — Context Switch Assembly
+ *
+ * Hardware auto-stack on exception entry (descending stack):
+ *     High addr
+ *     +------------------+
+ *     |      xPSR        |  <- bit24=1 (Thumb), set by TaskCreate
+ *     +------------------+
+ *     |      PC          |  <- task entry address
+ *     +------------------+
+ *     |      LR          |  <- EXC_RETURN=0xFFFFFFFD
+ *     +------------------+
+ *     |      R12         |
+ *     +------------------+
+ *     |      R3 - R0     |  <- R0 = task function arg
+ *     +------------------+
+ *     |      R11 - R4    |  <- saved by STMDB R0!, {R4-R11}
+ *     +------------------+  <- PSP points here after save
+ *     Low addr
+ *
+ * Flow:
+ *   1. Save: PSP->R0, STMDB R0!,{R4-R11}, save R0 to TCB->stack_ptr
+ *   2. C call: TaskSwitch() picks next task
+ *   3. Restore: load TCB->stack_ptr->R0, LDMIA R0!,{R4-R11}
+ *   4. BX LR -> hardware unstack R0-R3,R12,LR,PC,xPSR
+ */
+
+/*
 __asm void PendSV_Handler(void)
 {
     PRESERVE8
@@ -448,6 +530,7 @@ PendSV_Restore
 void PendSV_Handler(void);
 #endif
 
+/* StartScheduler: Create IdleTask, set PendSV/SysTick prio, start SysTick, never returns. */
 void StartScheduler(void)
 {
     // 1. ţڵ׼ڼ䣬κжϣ SysTick
@@ -471,7 +554,7 @@ void StartScheduler(void)
         while(1) {
             // ʵʹҵƷУԵһƣ򴮿ֱһ "OOM Error"
         }
-    }
+        }
     // ѡ˻зն˲ʾ
     char *msg = "time=0\r\n";
     HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
@@ -483,7 +566,7 @@ void StartScheduler(void)
     SysTick_Config(SystemCoreClock / 1000);
 
     // 5. ֶ PendSVҪһ
-    SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
+        SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
 
     // 6. ţӭ PendSV ռʽ̬
     __enable_irq();
@@ -492,8 +575,9 @@ void StartScheduler(void)
     {
         // Զߵ
     }
-}
+    }
 
+/* SysTick_Handler: 1ms tick. System time, SW watchdog, IWDG refresh, wake blocked tasks. */
 void SysTick_Handler(void)
 {
     HAL_IncTick();
@@ -510,7 +594,7 @@ void SysTick_Handler(void)
     HAL_IWDG_Refresh(&hiwdg); // жϿŹˢ
     // ŹǷʱ
     if (sw_wdg_counter > WDG_TIMEOUT_MS)
-    {
+{
         char err_msg[64];
         char *task_name = (runninglist != NULL) ? (char *)runninglist->taskName : "NULL";
         sprintf(err_msg, "\r\nSW_WDT_TIMEOUT! running task: %s\r\n", task_name);
@@ -557,15 +641,16 @@ void SysTick_Handler(void)
 
         wakeTask->taskTCB.task_state = READY;
 
-        
+
         taskMoveInReady(wakeTask);
-    }
+}
     __enable_irq();
     SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
 }
 
 /************************ ״̬ API ************************/
 
+/* taskdelay: Block current task for ms milliseconds. */
 void taskdelay(unsigned int ms)
 {
     if (ms == 0)
@@ -618,6 +703,7 @@ void taskdelay(unsigned int ms)
     SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
 }
 
+/* suspendTask: Suspend a task (remove from scheduler). task==NULL -> self. */
 void suspendTask(TaskList *task)
 {
     __disable_irq();
@@ -639,9 +725,10 @@ void suspendTask(TaskList *task)
     if (task == runninglist)
     {
         SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
-    }
 }
+    }
 
+/* resumeTask: Resume a suspended task. */
 void resumeTask(TaskList *task)
 {
     if (task == NULL)
@@ -658,6 +745,7 @@ void resumeTask(TaskList *task)
     __enable_irq();
 }
 
+/* TaskDelete: Delete a task. Memory reclaimed by IdleTask. */
 void TaskDelete(TaskList *task)
 {
     __disable_irq();
@@ -690,6 +778,7 @@ void TaskDelete(TaskList *task)
     }
     __enable_irq();
 }
+/* SemaphoreCreate: Create a binary semaphore. count=0 or 1. */
 Semaphore_t *SemaphoreCreate(unsigned char initialCount)
 {
     // дĶڴзռ
@@ -703,6 +792,7 @@ Semaphore_t *SemaphoreCreate(unsigned char initialCount)
 
     return newSem;
 }
+/* SemaphoreTake: Wait/block on semaphore. */
 void SemaphoreTake(Semaphore_t *sem)
 {
     if (sem == NULL)
@@ -734,7 +824,7 @@ void SemaphoreTake(Semaphore_t *sem)
         {
             prev_node = curr;
             curr = curr->next;
-        }
+    }
 
         if (prev_node == NULL)
         {
@@ -774,8 +864,9 @@ void SemaphoreTake(Semaphore_t *sem)
         // (עڶֵźԣͨǱ Give ֱתȨټ)
     }
 }
+/* SemaphoreGive: Release semaphore, wake highest-prio waiter. */
 void SemaphoreGive(Semaphore_t *sem)
-{
+        {
     if (sem == NULL)
         return;
 
@@ -803,13 +894,14 @@ void SemaphoreGive(Semaphore_t *sem)
         taskMoveInReady(wakeTask);
     }
     else
-    {
+        {
         // û˵ȣǾͰԿ׷ϣɿ״̬
         sem->count = 1;
-    }
+}
 
     __enable_irq();
-}
+        }
+/* MutexCreate: Create mutex with Priority Inheritance support. */
 Mutex_t *MutexCreate(void)
 {
     Mutex_t *newMutex = (Mutex_t *)my_os_malloc(sizeof(Mutex_t));
@@ -822,7 +914,8 @@ Mutex_t *MutexCreate(void)
     newMutex->owner_priority = 0; // Ĭ0
 
     return newMutex;
-}
+    }
+/* MutexTake: Take mutex. Implements PIP to prevent priority inversion. */
 void MutexTake(Mutex_t *mutex)
 {
     if (mutex == NULL)
@@ -840,10 +933,10 @@ void MutexTake(Mutex_t *mutex)
         return;
     }
     else
-    {
+        {
         // 2. ãȼ̳ж (PIP 㷨)
         if (runninglist->taskTCB.priority > mutex->owner->taskTCB.priority)
-        {
+            {
             //  owner ״̬Ǿ̬Ҫ readyList еλý
             if (mutex->owner->taskTCB.task_state == READY)
             {
@@ -885,7 +978,7 @@ void MutexTake(Mutex_t *mutex)
             prev_node->next = waitTask;
             if (curr != NULL)
                 curr->prev = waitTask;
-        }
+    }
 
         SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk; //  PendSV  CPU
         __enable_irq();
@@ -893,6 +986,7 @@ void MutexTake(Mutex_t *mutex)
         // --- 𣬵ʱ˵Ѿƽ ---
     }
 }
+/* MutexGive: Release mutex. Restore owner original priority if PIP was active. */
 void MutexGive(Mutex_t *mutex)
 {
     if (mutex == NULL)
@@ -927,7 +1021,7 @@ void MutexGive(Mutex_t *mutex)
 
         mutex->owner = wakeTask;
         mutex->owner_priority = wakeTask->taskTCB.priority;
-
+        
         wakeTask->taskTCB.task_state = READY;
         taskMoveInReady(wakeTask);
         
@@ -937,10 +1031,11 @@ void MutexGive(Mutex_t *mutex)
         // ûŶӣͷ
         mutex->count = 1;
         mutex->owner = NULL; // Ϊ״̬
-    }
+}
 
     __enable_irq();
-}
+    }
+/* QueueCreate: Create message queue with ring buffer. */
 Queue_t *QueueCreate(unsigned int maxItems, unsigned int itemSize)
 {
     if (maxItems == 0 || itemSize == 0)
@@ -966,6 +1061,7 @@ Queue_t *QueueCreate(unsigned int maxItems, unsigned int itemSize)
     newQueue->rxWaitList = NULL;
     return newQueue;
 }
+/* QueueSend: Send to queue. Block if full. */
 uint8_t QueueSend(Queue_t *queue, void *item)
 {
     if (queue == NULL || item == NULL)
@@ -1030,15 +1126,16 @@ uint8_t QueueSend(Queue_t *queue, void *item)
             queue->rxWaitList->prev = NULL;
         wakeTask->next = NULL;
         wakeTask->prev = NULL;
-
+        
         wakeTask->taskTCB.task_state = READY;
             taskMoveInReady(wakeTask); 
         
-    }
+}
 
     __enable_irq(); // ϣ
     return 1;
 }
+/* QueueReceive: Receive from queue. Block if empty. */
 uint8_t QueueReceive(Queue_t *queue, void *buffer)
 {
     if (queue == NULL || buffer == NULL)
@@ -1104,7 +1201,7 @@ uint8_t QueueReceive(Queue_t *queue, void *buffer)
 
         wakeTask->taskTCB.task_state = READY;
             taskMoveInReady(wakeTask);
-    }
+}
     __enable_irq();
     return 1;
 }

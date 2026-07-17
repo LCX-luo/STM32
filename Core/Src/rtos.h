@@ -19,7 +19,7 @@ typedef enum
     BLOCKED = 2, /* 阻塞态：等待延时/信号量等资源 */
     SUSPEND = 3, /* 挂起态：被主动暂停，无法被调度 */
     DELETE = 4,  /* 删除态：任务已被删除，等待回收 */
-} TaskStateTypeDef;
+} TaskStateTypeDef;  /* READY=0, RUNNING=1, BLOCKED=2, SUSPEND=3, DELETE=4 */
 
 
 

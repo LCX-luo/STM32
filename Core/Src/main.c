@@ -56,13 +56,20 @@ volatile uint8_t global_button_flag = 0; // 通用按键事件标志，可供任
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 // 规范：任务入口与私有函数的声明
+/* PrintTask: Background DMA printer. Reads PrintQueue -> UART2 DMA TX. Priority 3. */
 void PrintTask_Entry(void *arg);
+/* Task1: Demo task control. Deletes/recreates Task3 at runtime to test dynamic management. */
 void Task1_Entry(void *arg);
+/* Task2: Heartbeat — toggles PC13 LED every 500ms. */
 void Task2_Entry(void *arg);
+/* Task3: VIP data processor. Static int x survives delete/recreate. */
 void Task3_Entry(void *arg);
 void badtask(void *arg);
+/* my_itoa: Lightweight unsigned int to ASCII (no stdlib dependency). */
 uint8_t my_itoa(unsigned int num, char *str);
+/* LOGI: Async printf. Formats msg with timestamp -> PrintQueue. NOT for ISR use. */
 void LOGI(const char *format, ...);
+/* FlashUpdateTask: FOTA receive + flash write. Priority 1 (lowest user). */
 void FlashUpdateTask_Entry(void *arg);
 /* USER CODE END PFP */
 
@@ -73,6 +80,7 @@ void FlashUpdateTask_Entry(void *arg);
 /**
  * @brief 超轻量级无符号整数转字符串函数
  */
+/* my_itoa: Lightweight unsigned int to ASCII (no stdlib dependency). */
 uint8_t my_itoa(unsigned int num, char *str)
 {
   int i = 0;
@@ -103,6 +111,7 @@ uint8_t my_itoa(unsigned int num, char *str)
  * @brief 应用层异步日志打印函数 (类似 printf)
  * @note 绝不能在中断(ISR)或操作系统启动前调用此函数！
  */
+/* LOGI: Async printf. Formats msg with timestamp -> PrintQueue. NOT for ISR use. */
 void LOGI(const char *format, ...)
 {
   LogMsg_t txMsg;
@@ -131,6 +140,7 @@ void LOGI(const char *format, ...)
 /**
  * @brief DMA 驱动的后台打印任务 (消费者)
  */
+/* PrintTask: Background DMA printer. Reads PrintQueue -> UART2 DMA TX. Priority 3. */
 void PrintTask_Entry(void *arg)
 {
   LogMsg_t rxMsg;
@@ -145,6 +155,7 @@ void PrintTask_Entry(void *arg)
 /**
  * @brief 业务任务 1：演示任务控制与日志输出
  */
+/* Task1: Demo task control. Deletes/recreates Task3 at runtime to test dynamic management. */
 void Task1_Entry(void *arg)
 {
   int loop_count = 0;
@@ -173,6 +184,7 @@ void Task1_Entry(void *arg)
 /**
  * @brief 业务任务 2：高频 LED 闪烁
  */
+/* Task2: Heartbeat — toggles PC13 LED every 500ms. */
 void Task2_Entry(void *arg)
 {
   while (1)
@@ -186,6 +198,7 @@ void Task2_Entry(void *arg)
 /**
  * @brief 业务任务 3：VIP 数据处理任务 (含静态变量测试)
  */
+/* Task3: VIP data processor. Static int x survives delete/recreate. */
 void Task3_Entry(void *arg)
 {
   static int x;
@@ -212,6 +225,7 @@ void badtask(void *arg)
  * @note  编译时添加 FOTA_DEMO_NEW 宏启用
  */
 #ifdef FOTA_DEMO_NEW
+/* 按键控制呼吸灯+PB5 | Button: toggle breathing + PB5 */
 void ledtask(void *arg)
 {
   while (1)
@@ -275,6 +289,7 @@ void ledtask(void *arg)
 // 2. 全新通用按键事件分发任务 (替代原本的 ledtask)
 // 原理：利用 EXTI 中断释放的 Semaphore，唤醒本任务进行消抖并改变全局状态
 // =========================================================================
+/* 通用按键事件分发 | Universal button event dispatcher */
 void GenericButtonTask_Entry(void *arg)
 {
   while (1)
@@ -312,6 +327,7 @@ void GenericButtonTask_Entry(void *arg)
 // 3. 改造后的 PWM 任务 (支持状态打断)
 // 原理：在每次调整占空比前读取全局状态，如果模式改变，立即 break 跳出循环
 // =========================================================================
+/* PWM 呼吸灯驱动 | PWM breathing LED driver */
 void pwmtask(void *arg)
 {
   while (1)
@@ -471,6 +487,7 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
   }
 }
 
+/* EXTI 按键中断回调 | EXTI button interrupt callback */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   if (GPIO_Pin == GPIO_PIN_10)

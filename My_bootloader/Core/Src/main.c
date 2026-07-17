@@ -67,6 +67,7 @@ typedef void (*pFunction)(void);
 /**
   * @brief 搬运新固件：擦 App → 拷贝 Staging → 清理
   */
+/* copy_new_firmware: Erase app area, copy staging->app, erase staging+flag. */
 static void copy_new_firmware(void)
 {
     uint32_t word, src, dst;
@@ -111,6 +112,7 @@ static void copy_new_firmware(void)
   * @brief  The application entry point.
   * @retval int
   */
+/* Bootloader 入口: 检查标志位 -> 搬运 -> 跳转 App | Bootloader entry: check flag -> copy -> jump */
 int main(void)
 {
 
