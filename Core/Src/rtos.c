@@ -4,28 +4,29 @@
 #include "string.h"
 #include "iwdg.h"  
 #include <stdio.h>
-/************************ ºê¶¨ÒåÓëÄÚ²¿ÉùÃ÷ ************************/
+/************************ ê¶¨Ú² ************************/
 
 
-// Ç°ÖÃÉùÃ÷ÏµÍ³ÄÚ²¿µÄ¿ÕÏÐÈÎÎñ
+// Ç°ÏµÍ³Ú²Ä¿
 static void IdleTask_Entry(void* arg);
 
-/************************ È«¾Ö±äÁ¿¶¨Òå ************************/
+/************************ È«Ö± ************************/
 unsigned int OsRunningTime_ms = 0;
-uint8_t OS_Running = 0;               // 0´ú±íÏµÍ³Î´Æô¶¯£¬1´ú±íÒÑÆô¶¯
-volatile uint32_t sw_wdg_counter = 0; // Èí¼þ¿´ÃÅ¹·¼ÆÊýÆ÷
-// ¾ÍÐ÷Êý×é£¬Ã¿¸öÔªËØÊÇÒ»ÌõË«ÏòÁ´±íÍ·
+uint8_t OS_Running = 0;               // 0ÏµÍ³Î´1
+volatile uint32_t sw_wdg_counter = 0; // Å¹
+// é£¬Ã¿ÔªÒ»Ë«Í·
 TaskList *readyList[Max_PRIORITY];
-// ÏÂÒ»¸öÒªÖ´ÐÐµÄÈÎÎñ
+// Ò»ÒªÖ´Ðµ
 TaskList *next_task_ptr = NULL;
-// ÔËÐÐÖÐÈÎÎñ
+// 
 TaskList *runninglist;
-// ×èÈûÌ¬ÈÎÎñ
+// Ì¬
 TaskList *blockedlist;
-// ¹ÒÆðÌ¬ÈÎÎñ
+// Ì¬
 TaskList *suspendlist;
-// µÈ´ý³¹µ×Ïú»ÙµÄÈÎÎñÁ´±í
+// È´Ùµ
 TaskList *tasksWaitingTermination = NULL;
+uint16_t os_ready_bitmap = 0;
 
 /* ======================== å†…å­˜ç®¡ç† (heap4 é£Žæ ¼: best-fit + åŒå‘é“¾è¡¨ + æœ€å°ç¢Žç‰‡çº¦æŸ) ======================== */
 static unsigned char my_rtos_heap[RTOS_HEAP_SIZE];
@@ -143,7 +144,7 @@ void my_os_free(void *ptr)
     __enable_irq();
 }
 
-/************************ ºËÐÄÁ´±í²Ù×÷ ************************/
+/************************  ************************/
 
 void taskMoveInReady(TaskList *newTask)
 {   
@@ -151,38 +152,38 @@ void taskMoveInReady(TaskList *newTask)
         return;
     }
 
-    // ¡¾ÐÞÕý 2¡¿£ºµÚÒ»²½£¬±ØÐëÎÞÌõ¼þÏÈ½«×´Ì¬¸ÄÎª¾ÍÐ÷Ì¬
+    //  2Ò»È½×´Ì¬ÎªÌ¬
     newTask->taskTCB.task_state = READY;
 
-    // Ö»ÓÐÏµÍ³ÒÑ¾­¿ªÊ¼µ÷¶ÈÁË£¬²Å½øÐÐ VIP ÇÀÕ¼ÅÐ¶¨
+    // Ö»ÏµÍ³Ñ¾Ê¼Ë£Å½ VIP Õ¼Ð¶
     if (runninglist != NULL)
     {
-        // Èç¹ûÐÂÈÎÎñÓÅÏÈ¼¶´óÓÚÕýÔÚÔËÐÐµÄÈÎÎñ
+        // È¼Ðµ
         if (newTask->taskTCB.priority > runninglist->taskTCB.priority)
         {
-            // Èç¹û VIP Ï¯Î»¿ÕÈ±£¬»òÕßÐÂÈÎÎñÓÅÏÈ¼¶±Èµ±Ç° VIP »¹Òª¸ß
+            //  VIP Ï¯Î»È±È¼ÈµÇ° VIP Òª
             if (next_task_ptr == NULL || newTask->taskTCB.priority > next_task_ptr->taskTCB.priority)
             {
-                // ¡¾ÐÞÕý 1¡¿£º°þÀëÏà»¥Ã¬¶ÜµÄ if Ç¶Ì×
+                //  1à»¥Ã¬Üµ if Ç¶
                 if (next_task_ptr != NULL) {
-                    // Ô­À´µÄ VIP ÍËÎ»£¬×÷ÎªÆÕÍ¨ÈÎÎñÖØÐÂ×ßÒ»±é±¾º¯Êý£¬¹ÒÈëÁ´±í
+                    // Ô­ VIP Î»ÎªÍ¨Ò»é±¾
                     taskMoveInReady(next_task_ptr);
                 }
                 
-                // ÐÂ»ÊµÇ»ù
+                // Â»ÊµÇ»
                 next_task_ptr = newTask;
                 
-                // ÐüÆð PendSV ÇëÇóµ÷¶È
+                //  PendSV 
                 SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
                 
-                // VIP ÈÎÎñÒÑÔÚ×¨ÊôÖ¸ÕëÖÐ¾ÍÎ»£¬²»ÐèÒª¹ÒÈëË«ÏòÁ´±í£¬Ö±½Ó·µ»Ø
+                // VIP ×¨Ö¸Ð¾Î»ÒªË«Ö±Ó·
                 return; 
             }
         }
     }
 
     // ============================================
-    // ÏÂ·½ÎªÆÕÍ¨ÈÎÎñ£¨»ò±»ÌÔÌ­µÄ¾É VIP£©µÄÁ´±í²åÈëÂß¼­
+    // Â·ÎªÍ¨ñ£¨»Ì­Ä¾ VIPß¼
     // ============================================
     unsigned int priority = newTask->taskTCB.priority;
 
@@ -191,6 +192,7 @@ void taskMoveInReady(TaskList *newTask)
         readyList[priority] = newTask;
         newTask->prev = newTask;
         newTask->next = newTask;
+        os_ready_bitmap |= (1 << priority);
     }
     else
     {
@@ -203,7 +205,7 @@ void taskMoveInReady(TaskList *newTask)
     }
 }
 
-// Í³Ò»µÄÈÎÎñÕª³ýº¯Êý£ºÔÚÁÙ½çÇøÄÚÊ¹ÓÃ£¬²»¿É×èÈû£¡
+// Í³Ò»ÕªÙ½Ê¹Ã£
 void taskMoveOutList(TaskList *task)
 {
     if (task == NULL)
@@ -211,16 +213,17 @@ void taskMoveOutList(TaskList *task)
 
     TaskStateTypeDef state = task->taskTCB.task_state;
 
-    // ÔËÐÐÌ¬»òÒÑÉ¾³ýÌ¬²»ÔÚÈÎºÎ¿Éµ÷¶ÈÁ´±íÖÐ
+    // Ì¬É¾Ì¬ÎºÎ¿Éµ
     if (state == RUNNING || state == DELETE)
         return;
 
     if (state == READY)
     {
-        // Ñ­»·Ë«ÏòÁ´±í°þÀë
+        // Ñ­Ë«
         if (task->next == task)
         {
             readyList[task->taskTCB.priority] = NULL;
+            os_ready_bitmap &= ~(1 << task->taskTCB.priority);
         }
         else
         {
@@ -234,7 +237,7 @@ void taskMoveOutList(TaskList *task)
     }
     else if (state == BLOCKED || state == SUSPEND)
     {
-        // ÏßÐÔË«ÏòÁ´±í°þÀë
+        // Ë«
         if (task->prev != NULL)
         {
             task->prev->next = task->next;
@@ -257,19 +260,19 @@ void taskMoveOutList(TaskList *task)
     task->next = NULL;
 }
 
-/************************ ÄÚ²¿ÏµÍ³ÈÎÎñ ************************/
+/************************ Ú²ÏµÍ³ ************************/
 
-// ²Ù×÷ÏµÍ³×¨ÊôºóÌ¨¿ÕÏÐÈÎÎñ (×îµÍÓÅÏÈ¼¶)
+// ÏµÍ³×¨Ì¨ (È¼)
 static void IdleTask_Entry(void* arg)
 {
     while (1)
     {
         TaskList *toDelete = NULL;
 
-        // 1. Î¹¹·£ºÖ»Òª¿ÕÏÐÈÎÎñÄÜÔËÐÐ£¬ËµÃ÷Ã»ÓÐ¸ßÓÅÏÈ¼¶ÈÎÎñËÀËø¿¨ËÀ CPU
+        // 1. Î¹Ö»ÒªÐ£ËµÃ»Ð¸È¼ CPU
         sw_wdg_counter = 0;
 
-        // 2. ¼ì²éÊÇ·ñÓÐÐèÒªÊÕÊ¬µÄÈÎÎñ
+        // 2. Ç·ÒªÊ¬
         __disable_irq();
         if (tasksWaitingTermination != NULL)
         {
@@ -282,21 +285,21 @@ static void IdleTask_Entry(void* arg)
         }
         __enable_irq();
 
-        // 3. Ö´ÐÐÕæÕýµÄÄÚ´æÊÍ·Å (ÍË³öÁÙ½çÇøºóÔÙ²Ù×÷£¬·ÀÖ¹×èÈûµ÷¶È)
+        // 3. Ö´Ú´Í· (Ë³Ù½Ù²Ö¹)
         if (toDelete != NULL)
         {
             my_os_free(toDelete->taskTCB.stack_base);
             my_os_free(toDelete);
         }
 
-        // 4. ¿ÉÒÔÑ¡Ìî£ºµ¥Æ¬»ú½øÈëµÍ¹¦ºÄÄ£Ê½
+        // 4. Ñ¡î£ºÆ¬Í¹Ä£Ê½
         // __WFI();
     }
 }
 
-/************************ ÈÎÎñÓëµ÷¶È API ************************/
+/************************  API ************************/
 
-// ÐÞ¸Ä rtos.h ÖÐµÄÉùÃ÷
+// Þ¸ rtos.h Ðµ
 TaskList *TaskCreate(void (*taskFunction)(void *), void *arg, unsigned int priority, unsigned char *TaskName)
 {
     if (taskFunction == NULL || priority >= Max_PRIORITY)
@@ -358,7 +361,7 @@ void TaskSwitch(void)
     {
         if (runninglist != NULL)
         {
-            // Ö»ÓÐ±»ÇÀÕ¼µÄÈÎÎñ²Å·Å»Ø¾ÍÐ÷±í£¬Ö÷¶¯ÈÃ³öµÄÈÎÎñ×´Ì¬²»ÊÇRUNNING
+            // Ö»Ð±Õ¼Å·Å»Ø¾Ã³×´Ì¬RUNNING
             if (runninglist->taskTCB.task_state == RUNNING)
             {
                 runninglist->taskTCB.task_state = READY;
@@ -373,13 +376,8 @@ void TaskSwitch(void)
     }
 
     int highest_ready_prio = -1;
-    for (int i = Max_PRIORITY - 1; i >= 0; i--)
-    {
-        if (readyList[i] != NULL)
-        {
-            highest_ready_prio = i;
-            break;
-        }
+    if (os_ready_bitmap != 0) {
+        highest_ready_prio = 31 - __clz((uint32_t)os_ready_bitmap);
     }
 
     if (highest_ready_prio == -1){
@@ -401,7 +399,7 @@ void TaskSwitch(void)
     }
 
     runninglist = readyList[highest_ready_prio];
-    taskMoveOutList(runninglist); // Í³Ò»µÄÒÆ³öÂß¼­
+    taskMoveOutList(runninglist); // Í³Ò»Æ³ß¼
 
     runninglist->taskTCB.task_state = RUNNING;
     __enable_irq();
@@ -452,7 +450,7 @@ void PendSV_Handler(void);
 
 void StartScheduler(void)
 {
-    // 1. ¹ØÃÅ£¡ÔÚµã»ð×¼±¸ÆÚ¼ä£¬¾ø²»ÔÊÐíÈÎºÎÖÐ¶Ï£¨°üÀ¨ SysTick£©À´µ·ÂÒ
+    // 1. Å£Úµ×¼Ú¼ä£¬ÎºÐ¶Ï£ SysTick
     __disable_irq();
 
     NVIC_SetPriority(PendSV_IRQn, 15);
@@ -462,37 +460,37 @@ void StartScheduler(void)
     OsRunningTime_ms = 0;
     sw_wdg_counter = 0;
 
-    // 2. ´´½¨ÄÚ²¿ÈÎÎñ¡£´ËÊ±ÒòÎªÖÐ¶Ï¹Ø±Õ£¬ÀïÃæµÄ´®¿Ú´òÓ¡¾ø¶Ô°²È«
+    // 2. Ú²ñ¡£´Ê±ÎªÐ¶Ï¹Ø±Õ£Ä´Ú´Ó¡Ô°È«
     TaskCreate(IdleTask_Entry, NULL,0, (unsigned char *)"OS_Idle");
-// 2. ´´½¨ÄÚ²¿ÈÎÎñ¡£Ôö¼ÓÑÏ¸ñµÄ·µ»ØÖµÐ£Ñé£¡
+// 2. Ú²Ï¸Ä·ÖµÐ£é£¡
     TaskList* idle_task = TaskCreate(IdleTask_Entry, NULL,0, (unsigned char *)"OS_Idle");
     
-    // Èç¹ûÓÉÓÚ¶ÑÄÚ´æ²»×ãµ¼ÖÂ¿ÕÏÐÈÎÎñ´´½¨Ê§°Ü£¬Ö±½ÓÔÚ´Ë´¦½«ÏµÍ³å´»úËøËÀ£¬·ÀÖ¹Òý·¢²»¿É¿ØµÄÁ¬»·±ÀÀ£
+    // Ú¶Ú´æ²»ãµ¼Â¿ñ´´½Ê§Ü£Ö±Ú´Ë´ÏµÍ³å´»Ö¹É¿Øµ
     if (idle_task == NULL) {
         __disable_irq();
         while(1) {
-            // ÔÚÊµ¼Ê¹¤Òµ²úÆ·ÖÐ£¬ÕâÀï¿ÉÒÔµãÁÁÒ»¸öºìµÆ£¬»òÕßÏò´®¿ÚÖ±ÅçÒ»¸ö "OOM Error"
+            // ÊµÊ¹ÒµÆ·Ð£ÔµÒ»Æ£ò´®¿Ö±Ò» "OOM Error"
         }
     }
-    // £¨¿ÉÑ¡£º¼ÓÁË»»ÐÐ·û£¬ÖÕ¶Ë²ÅÄÜÁ¢¿ÌÏÔÊ¾£©
+    // Ñ¡Ë»Ð·Õ¶Ë²Ê¾
     char *msg = "time=0\r\n";
     HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
 
-    // 3. ËùÓÐµÄµ×²ã´òÓ¡ºÍ×¼±¸¶¼Íê³ÉÁË£¬ÉèÖÃÏµÍ³ÔËÐÐ±êÖ¾
+    // 3. ÐµÄµ×²Ó¡×¼Ë£ÏµÍ³Ð±Ö¾
     OS_Running = 1;
 
-    // 4. ÕâÊ±ºòÔÙÆô¶¯ SysTick ¶¨Ê±Æ÷
+    // 4. Ê± SysTick Ê±
     SysTick_Config(SystemCoreClock / 1000);
 
-    // 5. ÊÖ¶¯¹ÒÆð PendSV£¬Ë÷ÒªµÚÒ»´ÎÈÎÎñµ÷¶È
+    // 5. Ö¶ PendSVÒªÒ»
     SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
 
-    // 6. ¿ªÃÅ£¡Ó­½Ó PendSV ÇÀÕ¼£¬ÕýÊ½ÇÐÈëÈÎÎñÌ¬£¡
+    // 6. Å£Ó­ PendSV Õ¼Ê½Ì¬
     __enable_irq();
 
     while (1)
     {
-        // ÓÀÔ¶²»»á×ßµ½ÕâÀï
+        // Ô¶ßµ
     }
 }
 
@@ -500,17 +498,17 @@ void SysTick_Handler(void)
 {
     HAL_IncTick();
     // ==========================================
-    // ¡¾ºËÐÄÐÞ¸´¡¿£ºÈç¹û RTOS »¹Ã»ÓÐµã»ðÆô¶¯£¬Á¢¿Ì¹ö»ØÈ¥£¡
-    // ¾ø¶Ô²»ÔÊÐíÍùÏÂÖ´ÐÐÈÎºÎÓëÈÎÎñµ÷¶ÈÏà¹ØµÄÂß¼­
+    // Þ¸ RTOS Ã»ÐµÌ¹È¥
+    // Ô²Ö´ÎºØµß¼
     // ==========================================
     if (OS_Running == 0)
     {
         return; 
     }
     OsRunningTime_ms++;
-    sw_wdg_counter++; // Èí¼þ¿´ÃÅ¹·¼ÆÊýÔö¼Ó
-    HAL_IWDG_Refresh(&hiwdg); // ÖÐ¶Ï¿´ÃÅ¹·Ë¢ÐÂ
-    // ¼ì²éÈí¼þ¿´ÃÅ¹·ÊÇ·ñ³¬Ê±
+    sw_wdg_counter++; // Å¹
+    HAL_IWDG_Refresh(&hiwdg); // Ð¶Ï¿Å¹Ë¢
+    // Å¹Ç·Ê±
     if (sw_wdg_counter > WDG_TIMEOUT_MS)
     {
         char err_msg[64];
@@ -518,23 +516,23 @@ void SysTick_Handler(void)
         sprintf(err_msg, "\r\nSW_WDT_TIMEOUT! running task: %s\r\n", task_name);
 
         // =================================================================
-        // ¡¾ºËÐÄÐÞ¸Ä¡¿£ºÅ×Æú HAL_UART_Transmit£¬Ö±½ÓÂÖÑ¯¼Ä´æÆ÷±©Á¦·¢ËÍ
-        // ÕâÑù¿ÉÒÔ³¹µ×ÎÞÊÓ HAL ¿âµÄ BUSY Ëø×´Ì¬ºÍ Tick ¶³½áÎÊÌâ
+        // Þ¸Ä¡ HAL_UART_TransmitÖ±Ñ¯Ä´
+        // Ô³ HAL  BUSY ×´Ì¬ Tick 
         // =================================================================
         for (int i = 0; err_msg[i] != '\0'; i++)
         {
-            // µÈ´ý TXE (Transmit Data Register Empty) ÖÃÎ»£¬±íÊ¾¿ÉÒÔ·¢ËÍÏÂÒ»¸ö×Ö½Ú
+            // È´ TXE (Transmit Data Register Empty) Î»Ê¾Ô·Ò»Ö½
             while (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_TXE) == RESET)
                 ;
-            // Ö±½Ó½«×Ö·ûÇ¿ÐÐÈûÈëÓ²¼þ·¢ËÍÊý¾Ý¼Ä´æÆ÷ (DR)
+            // Ö±Ó½Ö·Ç¿Ó²Ý¼Ä´ (DR)
             huart2.Instance->DR = err_msg[i];
         }
 
-        // µÈ´ý TC (Transmission Complete) ÖÃÎ»£¬È·±£×îºóÒ»¸ö×Ö·û°²È«·É³öÒý½Å
+        // È´ TC (Transmission Complete) Î»È·Ò»Ö·È«É³
         while (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_TC) == RESET)
             ;
 
-        // ÒÅÑÔ·¢ËÍÍê±Ï£¬°²ÐÄÉÏÂ·
+        // Ô·Ï£Â·
         __set_FAULTMASK(1);
         NVIC_SystemReset();
     }
@@ -566,7 +564,7 @@ void SysTick_Handler(void)
     SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
 }
 
-/************************ ×´Ì¬¿ØÖÆ API ************************/
+/************************ ×´Ì¬ API ************************/
 
 void taskdelay(unsigned int ms)
 {
@@ -654,7 +652,7 @@ void resumeTask(TaskList *task)
     if (task->taskTCB.task_state == SUSPEND)
     {
         taskMoveOutList(task);
-        task->taskTCB.task_state = READY; // ±ØÐëÏÈ¸Ä×´Ì¬£¡
+        task->taskTCB.task_state = READY; // È¸×´Ì¬
         taskMoveInReady(task);
     }
     __enable_irq();
@@ -670,18 +668,22 @@ void TaskDelete(TaskList *task)
         return;
     }
 
-    // ÎïÀíÕª³ý²¢¸Ä×´Ì¬
+    // Õª×´Ì¬
     taskMoveOutList(task);
     task->taskTCB.task_state = DELETE;
 
-    // Í·²å·¨·ÅÈëµÈ´ý»ØÊÕÁ´±í
+    // Í·å·¨È´
     task->next = tasksWaitingTermination;
     task->prev = NULL;
     if (tasksWaitingTermination != NULL)
         tasksWaitingTermination->prev = task;
     tasksWaitingTermination = task;
 
-    // Èç¹ûÊÇÉ¾³ý×Ô¼º£¬±ØÐëÁ¢¿Ì´¥·¢µ÷¶È·ÅÆú CPU
+    // É¾Ô¼Ì´È· CPU
+    if (readyList[task->taskTCB.priority] == NULL) {
+        os_ready_bitmap &= ~(1 << task->taskTCB.priority);
+    }
+
     if (task == runninglist)
     {
         SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
@@ -690,14 +692,14 @@ void TaskDelete(TaskList *task)
 }
 Semaphore_t *SemaphoreCreate(unsigned char initialCount)
 {
-    // ´ÓÄãÊÖÐ´µÄ¶ÑÄÚ´æÖÐ·ÖÅä¿Õ¼ä
+    // Ð´Ä¶Ú´Ð·Õ¼
     Semaphore_t *newSem = (Semaphore_t *)my_os_malloc(sizeof(Semaphore_t));
     if (newSem == NULL)
         return NULL;
 
-    // ³õÊ¼»¯×ÊÔ´ÊýÁ¿ (¶þÖµÐÅºÅÁ¿Ö»ÄÜÊÇ 0 »ò 1)
+    // Ê¼Ô´ (ÖµÅºÖ» 0  1)
     newSem->count = (initialCount > 0) ? 1 : 0;
-    newSem->waitList = NULL; // ³õÊ¼×´Ì¬ÏÂÃ»ÓÐÈÎÎñµÈ´ý
+    newSem->waitList = NULL; // Ê¼×´Ì¬Ã»È´
 
     return newSem;
 }
@@ -706,28 +708,28 @@ void SemaphoreTake(Semaphore_t *sem)
     if (sem == NULL)
         return;
 
-    __disable_irq(); // ±ØÐë¹ØÖÐ¶Ï£¬±£»¤ÏµÍ³Á´±íºÍ×´Ì¬µÄÍêÕûÐÔ
+    __disable_irq(); // Ð¶Ï£ÏµÍ³×´Ì¬
 
     if (sem->count == 1)
     {
-        // 1. ×ÊÔ´¿ÉÓÃ£¬Ö±½ÓÄÃ×ß£¬²»´¥·¢ÈÎºÎµ÷¶È
+        // 1. Ô´Ã£Ö±ß£ÎºÎµ
         sem->count = 0;
         __enable_irq();
         return;
     }
     else
     {
-        // 2. ×ÊÔ´²»¿ÉÓÃ£¬µ±Ç°ÈÎÎñ±ØÐë×èÈû×Ô¼º
+        // 2. Ô´Ã£Ç°Ô¼
         TaskList *waitTask = runninglist;
 
-        // ¸Ä±äÈÎÎñ×´Ì¬
+        // Ä±×´Ì¬
         waitTask->taskTCB.task_state = BLOCKED;
 
-        // --- Á´±í²Ù×÷£º½«×Ô¼º¼ÓÈëµ½ÐÅºÅÁ¿µÄ waitList ÖÐ (°´ÓÅÏÈ¼¶ÅÅÐò£¬¸ßÔÚÇ°) ---
+        // --- Ô¼ëµ½Åº waitList  (È¼ò£¬¸Ç°) ---
         TaskList *curr = sem->waitList;
         TaskList *prev_node = NULL;
 
-        // Ñ°ÕÒ²åÈëÎ»ÖÃ£º±éÀúÁ´±íÖ±µ½ÕÒµ½Ò»¸öÓÅÏÈ¼¶±È×Ô¼ºµÍµÄ½Úµã
+        // Ñ°Ò²Î»Ã£Ö±ÒµÒ»È¼Ô¼ÍµÄ½Úµ
         while (curr != NULL && curr->taskTCB.priority >= waitTask->taskTCB.priority)
         {
             prev_node = curr;
@@ -736,7 +738,7 @@ void SemaphoreTake(Semaphore_t *sem)
 
         if (prev_node == NULL)
         {
-            // Çé¿ö1£ºÁ´±íÎª¿Õ£¬»òÕßµ±Ç°ÈÎÎñÓÅÏÈ¼¶×î¸ß£¬²åÈëµ½±íÍ·
+            // 1ÎªÕ£ßµÇ°È¼ß£ëµ½Í·
             waitTask->next = sem->waitList;
             waitTask->prev = NULL;
             if (sem->waitList != NULL)
@@ -747,7 +749,7 @@ void SemaphoreTake(Semaphore_t *sem)
         }
         else
         {
-            // Çé¿ö2£º²åÈëµ½ prev_node Ö®ºó£¬curr Ö®Ç°
+            // 2ëµ½ prev_node Ö®curr Ö®Ç°
             waitTask->next = curr;
             waitTask->prev = prev_node;
             prev_node->next = waitTask;
@@ -757,19 +759,19 @@ void SemaphoreTake(Semaphore_t *sem)
             }
         }
 
-        // 3. ÐüÆð PendSV£¬ÇëÇóÁ¢¿Ìµ÷¶È£¡
+        // 3.  PendSVÌµÈ£
         SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
 
-        __enable_irq(); // ¿ªÃÅ£¬ÈÃ PendSV ½øÀ´ÇÀÕ¼ CPU
+        __enable_irq(); // Å£ PendSV Õ¼ CPU
 
         // ==========================================================
-        // ¡¾¹Ø¼üÂß¼­µã¡¿£ºµ±Ç°ÈÎÎñ»áÔÚÕâÀï¡°Í£×¡¡±¡£
-        // µ±Î´À´Ä³Ò»Ìì£¬ÆäËûÈÎÎñµ÷ÓÃ SemaphoreGive »½ÐÑËüÊ±£¬
-        // ËüµÄ´úÂë»á´ÓÕâÀï¼ÌÐøÍùÏÂÖ´ÐÐ£¡
+        // Ø¼ß¼ã¡¿Ç°ï¡°Í£×¡
+        // Î´Ä³Ò»ì£¬ SemaphoreGive Ê±
+        // Ä´Ö´Ð£
         // ==========================================================
 
-        // ¼ÈÈ»ÐÑÀ´ÁË£¬ËµÃ÷ÄÃµ½ÐÅºÅÁ¿ÁË£¬ÎªÁËÑÏ½÷£¬ÔÙ´ÎÈ·±£ count Îª 0
-        // (×¢£ºÓÉÓÚ¶þÖµÐÅºÅÁ¿µÄÌØÐÔ£¬Í¨³£ÊÇ±» Give Ö±½Ó×ªÒÆÁËËùÓÐÈ¨£¬²»ÓÃÔÙ¼õ)
+        // È»Ë£ËµÃµÅºË£ÎªÏ½Ù´È· count Îª 0
+        // (×¢Ú¶ÖµÅºÔ£Í¨Ç± Give Ö±×ªÈ¨Ù¼)
     }
 }
 void SemaphoreGive(Semaphore_t *sem)
@@ -779,13 +781,13 @@ void SemaphoreGive(Semaphore_t *sem)
 
     __disable_irq();
 
-    // ¼ì²éÊÇ·ñÓÐÈËÔÚµÈÕâ¸öÐÅºÅÁ¿
+    // Ç·ÚµÅº
     if (sem->waitList != NULL)
     {
-        // 1. ÓÐÈËµÈ£¡°Ñ¶ÓÍ·µÄÈÎÎñÕªÏÂÀ´
+        // 1. ËµÈ£Ñ¶Í·Õª
         TaskList *wakeTask = sem->waitList;
 
-        // ½« wakeTask ´Ó waitList ÖÐÍÑÀë
+        //  wakeTask  waitList 
         sem->waitList = wakeTask->next;
         if (sem->waitList != NULL)
         {
@@ -797,12 +799,12 @@ void SemaphoreGive(Semaphore_t *sem)
 
         
 
-        // 2. ½«Æä·Å»ØÏµÍ³µÄ¾ÍÐ÷Á´±í
+        // 2. Å»ÏµÍ³Ä¾
         taskMoveInReady(wakeTask);
     }
     else
     {
-        // Ã»ÈËµÈ£¬ÄÇ¾Í°ÑÔ¿³×·ÅÔÚ×ÀÉÏ£¨±ä³É¿ÉÓÃ×´Ì¬£©
+        // Ã»ËµÈ£Ç¾Í°Ô¿×·Ï£É¿×´Ì¬
         sem->count = 1;
     }
 
@@ -814,10 +816,10 @@ Mutex_t *MutexCreate(void)
     if (newMutex == NULL)
         return NULL;
 
-    newMutex->count = 1;          // ³õÊ¼×´Ì¬¿ÉÓÃ
-    newMutex->waitList = NULL;    // Ã»ÈËµÈ´ý
-    newMutex->owner = NULL;       // »¹Ã»ÈËÄÃËø
-    newMutex->owner_priority = 0; // Ä¬ÈÏ0
+    newMutex->count = 1;          // Ê¼×´Ì¬
+    newMutex->waitList = NULL;    // Ã»ËµÈ´
+    newMutex->owner = NULL;       // Ã»
+    newMutex->owner_priority = 0; // Ä¬0
 
     return newMutex;
 }
@@ -826,37 +828,37 @@ void MutexTake(Mutex_t *mutex)
     if (mutex == NULL)
         return;
 
-    __disable_irq(); // ¹ØÖÐ¶Ï±£»¤ÁÙ½çÇø
+    __disable_irq(); // Ð¶Ï±Ù½
 
     if (mutex->count == 1)
     {
-        // 1. Ëø¿ÉÓÃ£¬µ±Ç°ÈÎÎñÖ±½ÓÄÃ×ß
+        // 1. Ã£Ç°Ö±
         mutex->count = 0;
-        mutex->owner = runninglist;                            // ÐûÊÄÖ÷È¨£¡
-        mutex->owner_priority = runninglist->taskTCB.priority; // ¼ÇÏÂÎÒ±¾À´µÄÓÅÏÈ¼¶
+        mutex->owner = runninglist;                            // È¨
+        mutex->owner_priority = runninglist->taskTCB.priority; // Ò±È¼
         __enable_irq();
         return;
     }
     else
     {
-        // 2. Ëø²»¿ÉÓÃ£¬´¥·¢ÓÅÏÈ¼¶¼Ì³ÐÅÐ¶¨ (PIP Ëã·¨ºËÐÄ)
+        // 2. Ã£È¼Ì³Ð¶ (PIP ã·¨)
         if (runninglist->taskTCB.priority > mutex->owner->taskTCB.priority)
         {
-            // Èç¹û³ÖÓÐËøµÄ owner ×´Ì¬ÊÇ¾ÍÐ÷Ì¬£¬ÎÒÃÇÐèÒª°ÑËüÔÚ readyList ÖÐµÄÎ»ÖÃ½øÐÐÉý¼¶
+            //  owner ×´Ì¬Ç¾Ì¬Òª readyList ÐµÎ»Ã½
             if (mutex->owner->taskTCB.task_state == READY)
             {
-                taskMoveOutList(mutex->owner);                                  // ÏÈ´ÓÔ­À´µÄµÍÓÅ¾ÍÐ÷Á´±í°þÀë[cite: 1, 4]
-                mutex->owner->taskTCB.priority = runninglist->taskTCB.priority; // °Î¸ßÓÅÏÈ¼¶
-                taskMoveInReady(mutex->owner);                                  // ÖØÐÂ°´¸ßÓÅÏÈ¼¶²åÈë¾ÍÐ÷Á´±í[cite: 1, 4]
+                taskMoveOutList(mutex->owner);                                  // È´Ô­ÄµÅ¾[cite: 1, 4]
+                mutex->owner->taskTCB.priority = runninglist->taskTCB.priority; // Î¸È¼
+                taskMoveInReady(mutex->owner);                                  // Â°È¼[cite: 1, 4]
             }
             else
             {
-                // Èç¹ûËü´¦ÓÚÆäËû×´Ì¬£¨ÆäÊµÔÚµ¥ºËÌåÏµÏÂ£¬ownerÍ¨³£¶¼ÔÚREADYÀï£©£¬Ö±½Ó¸ÄÊýÖµ¼´¿É
+                // ×´Ì¬ÊµÚµÏµÂ£ownerÍ¨READYï£©Ö±Ó¸Öµ
                 mutex->owner->taskTCB.priority = runninglist->taskTCB.priority;
             }
         }
 
-        // 3. µ±Ç°ÈÎÎñ¹Ô¹ÔÈ¥ÅÅ¶Ó (Âß¼­ÓëÐÅºÅÁ¿¼¸ºõÒ»ÖÂ)
+        // 3. Ç°Ô¹È¥Å¶ (ß¼ÅºÒ»)
         TaskList *waitTask = runninglist;
         waitTask->taskTCB.task_state = BLOCKED;
 
@@ -885,10 +887,10 @@ void MutexTake(Mutex_t *mutex)
                 curr->prev = waitTask;
         }
 
-        SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk; // ÐüÆð PendSV ½»³ö CPU
+        SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk; //  PendSV  CPU
         __enable_irq();
 
-        // --- ÈÎÎñÔÚÕâÀï¹ÒÆð£¬µ±±»»½ÐÑÊ±£¬ËµÃ÷ËøÒÑ¾­ÒÆ½»µ½ËüÊÖÉÏÁË ---
+        // --- ð£¬µÊ±ËµÑ¾Æ½ ---
     }
 }
 void MutexGive(Mutex_t *mutex)
@@ -898,22 +900,22 @@ void MutexGive(Mutex_t *mutex)
 
     __disable_irq();
 
-    // 1. °²È«¼ì²é£ºÖ»ÓÐ³ÖÓÐËøµÄÈË£¬²ÅÓÐ×Ê¸ñ»¹Ëø£¡
+    // 1. È«é£ºÖ»Ð³Ë£Ê¸
     if (mutex->owner != runninglist)
     {
         __enable_irq();
-        return; // »òÕß¿ÉÒÔÔÚÕâÀï¼ÓÒ»¸ö´íÎó¶ÏÑÔ
+        return; // ß¿Ò»
     }
 
-    // 2. ÓÅÏÈ¼¶»Ö¸´£ºÈç¹ûÖ®Ç°ÒòÎªÓÅÏÈ¼¶¼Ì³Ð±»°Î¸ßÁË£¬ÏÖÔÚ±ØÐë´ò»ØÔ­ÐÎ
+    // 2. È¼Ö¸Ö®Ç°ÎªÈ¼Ì³Ð±Î¸Ë£Ú±Ô­
     if (runninglist->taskTCB.priority != mutex->owner_priority)
     {
         runninglist->taskTCB.priority = mutex->owner_priority;
-        // ÒòÎªÓÅÏÈ¼¶½µÏÂÀ´ÁË£¬¿ÉÄÜ¾Í²»Èç readyList ÀïµÄÄ³Ð©ÈÎÎñÁË£¬ËùÒÔ±ØÐëÇëÇóÒ»´Îµ÷¶È
+        // ÎªÈ¼Ë£Ü¾Í² readyList Ä³Ð©Ë£Ô±Ò»Îµ
         SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
     }
 
-    // 3. ´¦ÀíÅÅ¶ÓµÄÈÎÎñ
+    // 3. Å¶Óµ
     if (mutex->waitList != NULL)
     {
         TaskList *wakeTask = mutex->waitList;
@@ -932,9 +934,9 @@ void MutexGive(Mutex_t *mutex)
     }
     else
     {
-        // Ã»ÈËÅÅ¶Ó£¬³¹µ×ÊÍ·Å
+        // Ã»Å¶Ó£Í·
         mutex->count = 1;
-        mutex->owner = NULL; // Ëø±äÎªÎÞÖ÷×´Ì¬
+        mutex->owner = NULL; // Îª×´Ì¬
     }
 
     __enable_irq();
@@ -969,17 +971,17 @@ uint8_t QueueSend(Queue_t *queue, void *item)
     if (queue == NULL || item == NULL)
         return 0;
 
-    __disable_irq(); // 1. ¹ØÖÐ¶Ï£¬±£»¤ÏµÍ³×ÊÔ´ºÍ»·ÐÎ»º³åÇø
+    __disable_irq(); // 1. Ð¶Ï£ÏµÍ³Ô´Í»Î»
 
-    // 2. ºËÐÄ·ÀÓù£ºÈç¹û¶ÓÁÐÂúÁË£¬µ±Ç°ÈÎÎñ±ØÐë×èÈû£¡
-    // ÎªÊ²Ã´ÓÃ while ¶ø²»ÊÇ if£¿ÕâÊÇ RTOS µÄ»Æ½ð·¨Ôò£º
-    // ÈÎÎñ±»»½ÐÑºó£¬¿ÉÄÜÓÉÓÚ¸ßÓÅÇÀÕ¼£¬¿Õ¼äÓÖ±»±ðÈËÕ¼ÁË£¬ËùÒÔÐÑÀ´ºó±ØÐëÖØÐÂ¼ì²éÊÇ·ñÕæµÄÓÐ¿ÕÎ»¡£
+    // 2. Ä·Ë£Ç°
+    // ÎªÊ²Ã´ while  if RTOS Ä»Æ½
+    // ñ±»»Ñºó£¬¿Ú¸Õ¼Õ¼Ö±Õ¼Ë£Â¼Ç·Ð¿Î»
     while (queue->count >= queue->maxItems)
     {
         TaskList *waitTask = runninglist;
         waitTask->taskTCB.task_state = BLOCKED;
 
-        // --- ½«×Ô¼º°´ÓÅÏÈ¼¶²åÈëÉú²úÕßµÄºò³µÊÒ (txWaitList) ---
+        // --- Ô¼È¼ßµÄº (txWaitList) ---
         TaskList *curr = queue->txWaitList;
         TaskList *prev_node = NULL;
         while (curr != NULL && curr->taskTCB.priority >= waitTask->taskTCB.priority)
@@ -1004,22 +1006,22 @@ uint8_t QueueSend(Queue_t *queue, void *item)
                 curr->prev = waitTask;
         }
 
-        SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk; // ÐüÆðµ÷¶È
-        __enable_irq();                      // ¿ªÃÅ½»³öCPU£¬ÈÎÎñÔÚÕâÀï³ÁË¯...
+        SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk; // 
+        __enable_irq();                      // Å½CPUË¯...
 
-        // --- ÈÎÎñÔÚÕâÀï±»Ïû·ÑÕß»½ÐÑ£¬ËµÃ÷ÓÐ¿ÕÎ»ÁË£¡ ---
-        __disable_irq(); // ÐÑÀ´ºóµÚÒ»¼þÊÂ£¬ÖØÐÂ¹ØÃÅ£¬»ØÈ¥Ö´ÐÐ while ¼ì²é
+        // --- ï±»ß»Ñ£ËµÐ¿Î»Ë£ ---
+        __disable_irq(); // Ò»Â£Â¹Å£È¥Ö´ while 
     }
 
-    // 3. Êý¾Ý¿½±´£º´ËÊ±¿Ï¶¨ÓÐ¿ÕÎ»£¬°ÑÓÃ»§Êý¾Ý¿½±´½øË®³ØµÄ tail£¨Î²²¿£©Î»ÖÃ
+    // 3. Ý¿Ê±Ï¶Ð¿Î»Ã»Ý¿Ë®Øµ tailÎ²Î»
     unsigned char *writePtr = queue->buffer + (queue->tail * queue->itemSize);
     memcpy(writePtr, item, queue->itemSize);
 
-    // 4. »·ÐÎÖ¸ÕëÍÆÑÝ£ºÎ²°ÍÏòÇ°×ßÒ»²½£¬Èç¹û×ßµ½¾¡Í·£¬ÓÃÈ¡Ä£(%)ÈÆ»ØÍ·²¿
+    // 4. Ö¸Ý£Î²Ç°Ò»ßµÍ·È¡Ä£(%)Æ»Í·
     queue->tail = (queue->tail + 1) % queue->maxItems;
-    queue->count++; // Ë®³ØË®Á¿ +1
+    queue->count++; // Ë®Ë® +1
 
-    // 5. »½ÐÑÏû·ÑÕß£ºÈç¹ûÓÐÈÎÎñÔÚµÈÊý¾Ý£¬½ÐÐÑÓÅÏÈ¼¶×î¸ßµÄÄÇ¸ö
+    // 5. ß£ÚµÝ£È¼ßµÇ¸
     if (queue->rxWaitList != NULL)
     {
         TaskList *wakeTask = queue->rxWaitList;
@@ -1034,7 +1036,7 @@ uint8_t QueueSend(Queue_t *queue, void *item)
         
     }
 
-    __enable_irq(); // ·¢ËÍÍê±Ï£¬¿ªÃÅ
+    __enable_irq(); // Ï£
     return 1;
 }
 uint8_t QueueReceive(Queue_t *queue, void *buffer)
@@ -1044,13 +1046,13 @@ uint8_t QueueReceive(Queue_t *queue, void *buffer)
 
     __disable_irq();
 
-    // 1. Èç¹ûË®³Ø¿ÕÁË£¬ÏëºÈË®µÄÈÎÎñ±ØÐë×èÈûÅÅ¶Ó
+    // 1. Ë®Ø¿Ë£Ë®Å¶
     while (queue->count == 0)
     {
         TaskList *waitTask = runninglist;
         waitTask->taskTCB.task_state = BLOCKED;
 
-        // --- ½«×Ô¼º°´ÓÅÏÈ¼¶²åÈëÏû·ÑÕßµÄºò³µÊÒ (rxWaitList) ---
+        // --- Ô¼È¼ßµÄº (rxWaitList) ---
         TaskList *curr = queue->rxWaitList;
         TaskList *prev_node = NULL;
         while (curr != NULL && curr->taskTCB.priority >= waitTask->taskTCB.priority)
@@ -1078,19 +1080,19 @@ uint8_t QueueReceive(Queue_t *queue, void *buffer)
         SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk;
         __enable_irq();
 
-        // --- ³ÁË¯... Ö±µ½ÓÐÉú²úÕß·¢ÁËÊý¾Ý»½ÐÑËü ---
+        // --- Ë¯... Ö±ß·Ý» ---
         __disable_irq();
     }
 
-    // 2. Êý¾Ý¿½±´£º´ËÊ±¿Ï¶¨ÓÐÊý¾Ý£¬´ÓË®³ØµÄ head£¨Í·²¿£©°ÑÊý¾Ý¿½±´µ½ÓÃ»§µÄ buffer ÖÐ
+    // 2. Ý¿Ê±Ï¶Ý£Ë®Øµ headÍ·Ý¿Ã» buffer 
     unsigned char *readPtr = queue->buffer + (queue->head * queue->itemSize);
     memcpy(buffer, readPtr, queue->itemSize);
 
-    // 3. »·ÐÎÖ¸ÕëÍÆÑÝ£º¶ÁÖ¸ÕëÏòÇ°×ßÒ»²½£¬Ë®Á¿ -1
+    // 3. Ö¸Ý£Ö¸Ç°Ò»Ë® -1
     queue->head = (queue->head + 1) % queue->maxItems;
     queue->count--;
 
-    // 4. »½ÐÑÉú²úÕß
+    // 4. 
     if (queue->txWaitList != NULL)
     {
         TaskList *wakeTask = queue->txWaitList;

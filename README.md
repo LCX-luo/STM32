@@ -57,14 +57,14 @@ Bootloader (7KB)    App (28KB)    Staging Area (28KB)    Flag (1KB)
 ├── PC_Tool/
 │   ├── fw_updater.py        # 上位机主程序
 │   └── protocol.py          # 协议编解码
-├── 项目报告.md              # 完整的开发记录（含 11 个 Bug 排查实录）
+├── 项目报告.md              # 完整的开发记录（含 12 个 Bug 排查实录）
 ├── 版本更新.md              # 逐版本变更日志与设计决策
 └── README.md
 ```
 
 ---
 
-## 🧠 本项目记录的 11 个 Bug 排查（详见`项目报告.md`）
+## 🧠 本项目记录的 12 个 Bug 排查（详见`项目报告.md`）
 
 | # | Bug | 根因 |
 |--|-----|------|
@@ -79,6 +79,7 @@ Bootloader (7KB)    App (28KB)    Staging Area (28KB)    Flag (1KB)
 | 9 | RTOS 适配差异 | SemaphoreGive ISR 不安全、无软定时器等 |
 | 10 | 传输期间按键无响应 | `write_flash_buffer` 连续 512 次 `__disable_irq` |
 | 11 | 内存分配器升级 | first-fit -> heap4 best-fit + 双向链表 + 最小碎片约束 |
+| 12 | 调度器 O(n)→O(1) | for 循环扫描 → 位图 + CLZ 单周期查找最高优先级 |
 
 ---
 

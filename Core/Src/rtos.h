@@ -51,6 +51,7 @@ typedef struct
 // 允许 main.c 等其他文件读取系统运行时间与运行状态
 extern unsigned int OsRunningTime_ms;
 extern uint8_t OS_Running;
+extern uint16_t os_ready_bitmap;
 
 /************************ RTOS 公开 API 声明 ************************/
 void my_os_heap_init(void);
