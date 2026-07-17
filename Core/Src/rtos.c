@@ -27,12 +27,15 @@ TaskList *suspendlist;
 // µÈ´ý³¹µ×Ïú»ÙµÄÈÎÎñÁ´±í
 TaskList *tasksWaitingTermination = NULL;
 
-/************************ ÄÚ´æ¹ÜÀí ************************/
+/* ======================== å†…å­˜ç®¡ç† (heap4 é£Žæ ¼: best-fit + åŒå‘é“¾è¡¨ + æœ€å°ç¢Žç‰‡çº¦æŸ) ======================== */
 static unsigned char my_rtos_heap[RTOS_HEAP_SIZE];
+
+#define HEAP_MIN_BLOCK_SIZE  ((uint32_t)(sizeof(struct MemBlock) + 8))
 
 typedef struct MemBlock
 {
     struct MemBlock *next;
+    struct MemBlock *prev;
     uint32_t size;
 } MemBlock_t;
 
@@ -42,6 +45,7 @@ void my_os_heap_init(void)
 {
     freeListHead = (MemBlock_t *)my_rtos_heap;
     freeListHead->next = NULL;
+    freeListHead->prev = NULL;
     freeListHead->size = RTOS_HEAP_SIZE;
 }
 
@@ -53,90 +57,87 @@ void *my_os_malloc(uint32_t size)
     uint32_t total_size = (size + 7) & ~7;
     total_size += sizeof(MemBlock_t);
 
-    MemBlock_t *prev = NULL;
-    MemBlock_t *curr = freeListHead;
-    MemBlock_t *best_block = NULL;
-    MemBlock_t *best_block_prev = NULL;
+    if (total_size < HEAP_MIN_BLOCK_SIZE)
+        total_size = HEAP_MIN_BLOCK_SIZE;
 
     __disable_irq();
 
+    MemBlock_t *best = NULL;
+    MemBlock_t *curr = freeListHead;
+    uint32_t best_size = 0xFFFFFFFF;
+
     while (curr != NULL)
     {
-        if (curr->size >= total_size)
+        if (curr->size >= total_size && curr->size < best_size)
         {
-            best_block = curr;
-            best_block_prev = prev;
-            break;
+            best = curr;
+            best_size = curr->size;
         }
-        prev = curr;
         curr = curr->next;
     }
 
-    if (best_block == NULL)
+    if (best == NULL)
     {
         __enable_irq();
         return NULL;
     }
 
-    if (best_block->size - total_size >= sizeof(MemBlock_t) + 8)
+    if (best->size - total_size >= HEAP_MIN_BLOCK_SIZE)
     {
-        MemBlock_t *new_free_block = (MemBlock_t *)((uint8_t *)best_block + total_size);
-        new_free_block->size = best_block->size - total_size;
-        new_free_block->next = best_block->next;
-        best_block->size = total_size;
-
-        if (best_block_prev == NULL)
-            freeListHead = new_free_block;
-        else
-            best_block_prev->next = new_free_block;
+        MemBlock_t *new_free = (MemBlock_t *)((uint8_t *)best + total_size);
+        new_free->size = best->size - total_size;
+        new_free->next = best->next;
+        new_free->prev = best->prev;
+        if (new_free->next) new_free->next->prev = new_free;
+        if (new_free->prev) new_free->prev->next = new_free;
+        else freeListHead = new_free;
+        best->size = total_size;
     }
     else
     {
-        if (best_block_prev == NULL)
-            freeListHead = best_block->next;
-        else
-            best_block_prev->next = best_block->next;
+        if (best->prev) best->prev->next = best->next;
+        else freeListHead = best->next;
+        if (best->next) best->next->prev = best->prev;
     }
 
+    best->next = NULL;
+    best->prev = NULL;
     __enable_irq();
-    return (void *)((uint8_t *)best_block + sizeof(MemBlock_t));
+    return (void *)((uint8_t *)best + sizeof(MemBlock_t));
 }
 
 void my_os_free(void *ptr)
 {
-    if (ptr == NULL)
-        return;
-
-    MemBlock_t *block_to_free = (MemBlock_t *)((uint8_t *)ptr - sizeof(MemBlock_t));
+    if (ptr == NULL) return;
+    MemBlock_t *block = (MemBlock_t *)((uint8_t *)ptr - sizeof(MemBlock_t));
     __disable_irq();
 
-    MemBlock_t *curr = freeListHead;
     MemBlock_t *prev = NULL;
-
-    while (curr != NULL && curr < block_to_free)
+    MemBlock_t *curr = freeListHead;
+    while (curr != NULL && curr < block)
     {
         prev = curr;
         curr = curr->next;
     }
 
-    block_to_free->next = curr;
-    if (prev == NULL)
-        freeListHead = block_to_free;
-    else
-        prev->next = block_to_free;
+    block->next = curr;
+    block->prev = prev;
+    if (prev) prev->next = block;
+    else freeListHead = block;
+    if (curr) curr->prev = block;
 
-    if (block_to_free->next != NULL &&
-        (uint8_t *)block_to_free + block_to_free->size == (uint8_t *)block_to_free->next)
+    if (curr && (uint8_t *)block + block->size == (uint8_t *)curr)
     {
-        block_to_free->size += block_to_free->next->size;
-        block_to_free->next = block_to_free->next->next;
+        block->size += curr->size;
+        block->next = curr->next;
+        if (curr->next) curr->next->prev = block;
     }
 
-    if (prev != NULL &&
-        (uint8_t *)prev + prev->size == (uint8_t *)block_to_free)
+    if (prev && (uint8_t *)prev + prev->size == (uint8_t *)block)
     {
-        prev->size += block_to_free->size;
-        prev->next = block_to_free->next;
+        prev->size += block->size;
+        prev->next = block->next;
+        if (block->next) block->next->prev = prev;
     }
 
     __enable_irq();
