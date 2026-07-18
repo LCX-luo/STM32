@@ -399,7 +399,8 @@ void FlashUpdateTask_Entry(void *arg)
                     send_packet(PKT_OK, NULL, 0, 0);
                     LOGI("FOTA: Update ready! Rebooting...\r\n");
                     taskdelay(200);  // 确保 DMA 发完 OK 帧
-                    NVIC_SystemReset();
+                    //NVIC_SystemReset();
+                    LOGI("New firmware download completed, waiting for manual reboot to take effect.\r\n");
                     break;
 
                 default:
@@ -425,7 +426,7 @@ void FlashUpdateTask_Entry(void *arg)
                 ready_resend = 0;
                 send_packet(PKT_READY, NULL, 0, 0);
             }
-            taskdelay(5);  // 无数据，让出 CPU
+            taskdelay(20);  // 无数据，让出 CPU
         }
     }
 }

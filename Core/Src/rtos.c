@@ -312,7 +312,8 @@ static void IdleTask_Entry(void* arg)
     }
 
         // 4. 空闲时休眠CPU（可选，注释关闭）/ Sleep CPU when idle (optional, commented out)
-        // __WFI();
+        //LOGI("sleep");
+         __WFI();
     }
 }
 
