@@ -1,0 +1,22 @@
+--cpu Cortex-M3
+"my_bootloader\startup_stm32f103xb.o"
+"my_bootloader\main.o"
+"my_bootloader\gpio.o"
+"my_bootloader\stm32f1xx_it.o"
+"my_bootloader\stm32f1xx_hal_msp.o"
+"my_bootloader\stm32f1xx_hal_gpio_ex.o"
+"my_bootloader\stm32f1xx_hal.o"
+"my_bootloader\stm32f1xx_hal_rcc.o"
+"my_bootloader\stm32f1xx_hal_rcc_ex.o"
+"my_bootloader\stm32f1xx_hal_gpio.o"
+"my_bootloader\stm32f1xx_hal_dma.o"
+"my_bootloader\stm32f1xx_hal_cortex.o"
+"my_bootloader\stm32f1xx_hal_pwr.o"
+"my_bootloader\stm32f1xx_hal_flash.o"
+"my_bootloader\stm32f1xx_hal_flash_ex.o"
+"my_bootloader\stm32f1xx_hal_exti.o"
+"my_bootloader\system_stm32f1xx.o"
+--strict --scatter "My_bootloader\My_bootloader.sct"
+--summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
+--info sizes --info totals --info unused --info veneers
+--list "My_bootloader.map" -o My_bootloader\My_bootloader.axf
