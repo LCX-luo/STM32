@@ -23,10 +23,14 @@ My_bootloader/MDK-ARM/My_bootloader/*.hex
 My_bootloader/MDK-ARM/My_bootloader/*.htm
 My_bootloader/MDK-ARM/My_bootloader/*.map
 
-# IDE
+# IDE / Editor
 *.uvguix.*
 *.uvoptx
 DebugConfig/
+.vscode/
+
+# Agent metadata
+.kagent/
 
 # Python
 __pycache__/
