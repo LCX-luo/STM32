@@ -50,6 +50,7 @@ Semaphore_t *DmaTxSem = NULL;
 Semaphore_t *ButtonSem = NULL;
 volatile uint8_t breathing_mode = 1;     // 1: 呼吸模式, 0: 常亮模式
 volatile uint8_t global_button_flag = 0; // 通用按键事件标志，可供任意任务轮询读取
+Mutex_t *FlashMutex = NULL;              // Flash 控制器互斥锁
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -408,18 +409,19 @@ int main(void)
 
   // 2. 初始化核心 IPC（进程间通信）机制
   PrintQueue = QueueCreate(10, sizeof(LogMsg_t));
-  DmaTxSem = SemaphoreCreate(1);
-  ButtonSem = SemaphoreCreate(0);
+  DmaTxSem   = SemaphoreCreate(1);
+  ButtonSem  = SemaphoreCreate(0);
+  FlashMutex = MutexCreate();    // Flash 控制器互斥锁
   // 3. 创建所有业务任务
   TaskList *task = TaskCreate(Task3_Entry, NULL, 2, (unsigned char *)"Task3_VIP");
   TaskCreate(PrintTask_Entry, NULL, 3, (unsigned char *)"PrintTask");
   TaskCreate(Task1_Entry, task, 2, (unsigned char *)"Task1");
   TaskCreate(Task2_Entry, NULL, 2, (unsigned char *)"Task2");
   TaskCreate(ledtask, NULL, 2, (unsigned char *)"LedTask");
-  TaskCreate(pwmtask, NULL, 3, (unsigned char *)"PwmTask");
+  TaskCreateEX(pwmtask, NULL, 3, 64, (unsigned char *)"PwmTask");
   //TaskCreate(GenericButtonTask_Entry, NULL, 2, (unsigned char *)"GenericButtonTask");
   // 5. 在线升级 FOTA 任务（最低用户优先级 1，后台运行）
-  TaskCreate(FlashUpdateTask_Entry, NULL, 1, (unsigned char *)"FlashUpd");
+  TaskCreateEX(FlashUpdateTask_Entry, NULL, 1, 200, (unsigned char *)"FlashUpd");
   // 4. 启动调度器，系统接管 CPU 控制权
   StartScheduler();
   /* USER CODE END 2 */

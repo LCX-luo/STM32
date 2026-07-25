@@ -9,7 +9,7 @@
 #define Max_PRIORITY 16
 #define TASK_NAME_MAX_LENGTH 10
 #define RTOS_HEAP_SIZE 12288
-#define TASK_DEFAULT_STACK_SIZE 256
+#define TASK_DEFAULT_STACK_SIZE 128
 #define WDG_TIMEOUT_MS 9000 // 软件看门狗超时时间配置为9s
 /************************ 任务状态枚举定义 ************************/
 typedef enum
@@ -31,6 +31,7 @@ typedef struct TCB
     unsigned int delay_ms;       /* 任务延时计数器 */
     unsigned int priority;       /* 任务优先级 */
     TaskStateTypeDef task_state; /* 任务状态（联合体） */
+    uint8_t held_mutex_count;    /* 当前持有互斥锁数量 | Num mutexes held */
 } myTCB;
 
 typedef struct TaskList TaskList;
@@ -60,6 +61,7 @@ void my_os_free(void *ptr);
 
 // 修改 rtos.h 中的声明
 TaskList *TaskCreate(void (*taskFunction)(void *), void *arg, unsigned int priority, unsigned char *TaskName);
+TaskList *TaskCreateEX(void (*taskFunction)(void *), void *arg, unsigned int priority, unsigned int stack_words, unsigned char *TaskName);
 void StartScheduler(void);
 void taskdelay(unsigned int ms);
 void TaskDelete(TaskList *task);

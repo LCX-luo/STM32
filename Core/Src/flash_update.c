@@ -7,6 +7,7 @@
 
 /* LOGI 定义在 main.c 中 */
 extern void LOGI(const char *format, ...);
+extern Mutex_t *FlashMutex;  /* Flash 互斥锁 | Flash controller mutex */
 
 /* ======================== 全局变量 ======================== */
 RingBuffer_t g_rx_ring;
@@ -220,6 +221,7 @@ void erase_staging_area(void)
     };
     uint32_t page_error = 0;
 
+    MutexTake(FlashMutex);
     HAL_FLASH_Unlock();
 
     for (uint16_t i = 0; i < STAGING_PAGE_NUM; i++) {
@@ -239,6 +241,7 @@ void erase_staging_area(void)
         }
     }
     HAL_FLASH_Lock();
+    MutexGive(FlashMutex);
 
     /* 最后输出完成状态 */
     LOGI("FOTA: Erase complete\r\n");
@@ -247,6 +250,7 @@ void erase_staging_area(void)
 void write_flash_buffer(uint32_t dst_addr, const uint8_t *data, uint16_t len)
 {
     uint16_t word_count = 0;
+    MutexTake(FlashMutex);
     HAL_FLASH_Unlock();
     for (uint16_t i = 0; i < len; i += 4) {
         uint32_t word;
@@ -264,6 +268,7 @@ void write_flash_buffer(uint32_t dst_addr, const uint8_t *data, uint16_t len)
         }
     }
     HAL_FLASH_Lock();
+    MutexGive(FlashMutex);
 }
 
 void erase_flag_page(void)
@@ -274,9 +279,11 @@ void erase_flag_page(void)
         .NbPages = 1
     };
     uint32_t page_error = 0;
+    MutexTake(FlashMutex);
     HAL_FLASH_Unlock();
     HAL_FLASHEx_Erase(&erase, &page_error);
     HAL_FLASH_Lock();
+    MutexGive(FlashMutex);
 }
 
 void set_update_flag(void)
@@ -284,12 +291,14 @@ void set_update_flag(void)
     /* 先擦除标志页（第 7 页，独立页不影响 Bootloader） */
     erase_flag_page();
     /* 写入 MAGIC */
+    MutexTake(FlashMutex);
     HAL_FLASH_Unlock();
     uint32_t magic = MAGIC_UPDATE_READY;
     if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, UPDATE_FLAG_ADDR, magic) != HAL_OK) {
         LOGI("FOTA: Write flag failed!\r\n");
     }
     HAL_FLASH_Lock();
+    MutexGive(FlashMutex);
 }
 
 /* ======================== FOTA 任务 ======================== */

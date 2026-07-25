@@ -346,7 +346,7 @@ static void IdleTask_Entry(void* arg)
 
 
 /* 创建任务：分配TCB内存+任务栈，初始化Cortex-M异常栈帧 / Create new task: allocate TCB & stack, init Cortex-M exception stack frame */
-TaskList *TaskCreate(void (*taskFunction)(void *), void *arg, unsigned int priority, unsigned char *TaskName)
+TaskList *TaskCreateEX(void (*taskFunction)(void *), void *arg, unsigned int priority, unsigned int stack_words, unsigned char *TaskName)
 {
     if (taskFunction == NULL || priority >= Max_PRIORITY)
         return NULL;
@@ -354,19 +354,19 @@ TaskList *TaskCreate(void (*taskFunction)(void *), void *arg, unsigned int prior
     if (newTask == NULL)
         return NULL;
 
-    unsigned int *taskStack = (unsigned int *)my_os_malloc(TASK_DEFAULT_STACK_SIZE * sizeof(unsigned int));
+    unsigned int *taskStack = (unsigned int *)my_os_malloc(stack_words * sizeof(unsigned int));
     if (taskStack == NULL)
     {
         my_os_free(newTask);
         return NULL;
     }
 
-    newTask->taskTCB.stack_ptr = taskStack + TASK_DEFAULT_STACK_SIZE; // 栈指针初始指向栈顶 / Stack ptr point to stack top
+    newTask->taskTCB.stack_ptr = taskStack + stack_words; // 栈指针初始指向栈顶 / Stack ptr point to stack top
     newTask->taskTCB.stack_base = taskStack;                          // 栈内存起始地址 / Stack base address
     newTask->taskTCB.delay_ms = 0;                                    // 阻塞延时清零 / Block delay tick init 0
     newTask->taskTCB.priority = priority;                             // 设置任务优先级 / Set task priority
     newTask->taskTCB.task_state = READY;                              // 任务初始状态就绪 / Init task state READY
-
+    newTask->taskTCB.held_mutex_count = 0;  // Init count
     // 填充异常栈帧16个寄存器位置 / Fill 16 register stack frame
     for (int i = 1; i <= 16; i++)
     {
@@ -422,6 +422,12 @@ TaskList *TaskCreate(void (*taskFunction)(void *), void *arg, unsigned int prior
     HAL_UART_Transmit(&huart2, (uint8_t *)msg, strlen(msg), HAL_MAX_DELAY);
     return newTask;
     }
+
+/* TaskCreate wrapper */
+TaskList *TaskCreate(void (*taskFunction)(void *), void *arg, unsigned int priority, unsigned char *TaskName)
+{
+    return TaskCreateEX(taskFunction, arg, priority, TASK_DEFAULT_STACK_SIZE, TaskName);
+}
 
 /* 任务调度核心函数：选择下一个待运行任务，位图+CLZ实现O(1)最高优先级查询 / TaskSwitch: Select next task to run. Uses O(1) bitmap + CLZ for priority lookup. */
 void TaskSwitch(void)
@@ -565,9 +571,9 @@ void StartScheduler(void)
     sw_wdg_counter = 0;
 
     // 2. 创建空闲任务（优先级0）/ Create idle task (priority 0)
-    TaskCreate(IdleTask_Entry, NULL,0, (unsigned char *)"OS_Idle");
+    TaskCreateEX(IdleTask_Entry, NULL,0, 64, (unsigned char *)"OS_Idle");
 // 重复创建空闲任务变量接收句柄 / Receive idle task handle
-    TaskList* idle_task = TaskCreate(IdleTask_Entry, NULL,0, (unsigned char *)"OS_Idle");
+    TaskList* idle_task = TaskCreateEX(IdleTask_Entry, NULL,0, 64, (unsigned char *)"OS_Idle");
     
     // 空闲任务创建失败，内存不足卡死 / Idle task create failed, OOM lockup
     if (idle_task == NULL) {
@@ -672,9 +678,26 @@ void SysTick_Handler(void)
 
 /************************ 延时/任务控制API / Delay & Task Control API ************************/
 
+static void check_no_mutex_held(void)
+{
+    if (runninglist && runninglist->taskTCB.held_mutex_count > 0)
+    {
+        char err[] = "[RTOS FATAL] Blocked while holding mutex!\r\n";
+        for (int i = 0; err[i]; i++)
+        {
+            while (!(USART2->SR & USART_SR_TXE));
+            USART2->DR = err[i];
+        }
+        while (!(USART2->SR & USART_SR_TC));
+        __disable_irq();
+        while(1){}
+    }
+}
+
 /* taskdelay：阻塞当前任务指定毫秒时长 / taskdelay: Block current task for ms milliseconds. */
 void taskdelay(unsigned int ms)
 {
+    check_no_mutex_held();
     if (ms == 0)
     {
         SCB->ICSR |= SCB_ICSR_PENDSVSET_Msk; // 0延时主动让出CPU / Zero delay yield CPU
@@ -820,6 +843,7 @@ Semaphore_t *SemaphoreCreate(unsigned char initialCount)
 /* SemaphoreTake：获取信号量，无资源则阻塞当前任务 / SemaphoreTake: Wait/block on semaphore. */
 void SemaphoreTake(Semaphore_t *sem)
 {
+    check_no_mutex_held();
     if (sem == NULL)
         return;
 
@@ -829,6 +853,8 @@ void SemaphoreTake(Semaphore_t *sem)
     {
         // 持有资源，计数清零直接返回 / Resource available, clear count and return
         sem->count = 0;
+        runninglist->taskTCB.held_mutex_count++;
+        runninglist->taskTCB.held_mutex_count++;
         __enable_irq();
         return;
     }
@@ -938,6 +964,7 @@ void MutexTake(Mutex_t *mutex)
         // 锁空闲，当前任务持有锁 / Mutex free, current task take ownership
         mutex->count = 0;
         mutex->owner = runninglist;
+        runninglist->taskTCB.held_mutex_count++;
         mutex->owner_priority = runninglist->taskTCB.priority;
         __enable_irq();
         return;
@@ -1010,6 +1037,8 @@ void MutexGive(Mutex_t *mutex)
         return;
     }
 
+    runninglist->taskTCB.held_mutex_count--;
+
     // 若优先级被提升，恢复原始优先级 / Restore original priority if PIP boosted prio
     if (runninglist->taskTCB.priority != mutex->owner_priority)
     {
@@ -1029,6 +1058,7 @@ void MutexGive(Mutex_t *mutex)
 
         mutex->owner = wakeTask;
         mutex->owner_priority = wakeTask->taskTCB.priority;
+        wakeTask->taskTCB.held_mutex_count++;
         
         wakeTask->taskTCB.task_state = READY;
         taskMoveInReady(wakeTask);
@@ -1072,6 +1102,7 @@ Queue_t *QueueCreate(unsigned int maxItems, unsigned int itemSize)
 /* QueueSend：向队列发送消息，队列满则阻塞发送任务 / QueueSend: Send to queue. Block if full. */
 uint8_t QueueSend(Queue_t *queue, void *item)
 {
+    check_no_mutex_held();
     if (queue == NULL || item == NULL)
         return 0;
 
@@ -1144,6 +1175,7 @@ uint8_t QueueSend(Queue_t *queue, void *item)
 /* QueueReceive：从队列读取消息，队列为空则阻塞接收任务 / QueueReceive: Receive from queue. Block if empty. */
 uint8_t QueueReceive(Queue_t *queue, void *buffer)
 {
+    check_no_mutex_held();
     if (queue == NULL || buffer == NULL)
         return 0;
 
