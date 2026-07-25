@@ -225,46 +225,59 @@ void erase_staging_area(void)
     HAL_FLASH_Unlock();
 
     for (uint16_t i = 0; i < STAGING_PAGE_NUM; i++) {
-        /* 擦除一页（~30ms 内 Flash 总线忙，其他任务无法从 Flash 取指令）*/
         erase.PageAddress = STAGING_ADDR + (i * 1024);
-        if (HAL_FLASHEx_Erase(&erase, &page_error) != HAL_OK) {
+        uint8_t erase_ok = (HAL_FLASHEx_Erase(&erase, &page_error) == HAL_OK);
+
+        /* 每页擦完后释放锁，LOGI/taskdelay 都在无锁段执行 */
+        HAL_FLASH_Lock();
+        MutexGive(FlashMutex);
+
+        if (!erase_ok) {
             LOGI("FOTA: Erase page %d failed!\r\n", i);
         }
-
-        /* 每页擦完后必须做的事： */
-        HAL_IWDG_Refresh(&hiwdg);     // 刷新硬件看门狗（300ms 超时）
-        taskdelay(10);                 // 让出 CPU，给 PrintTask 等任务发送日志
-
-        /* 每 4 页输出一次进度 */
         if ((i % 4) == 0) {
             LOGI("FOTA: Erasing... %d/%d\r\n", i + 1, STAGING_PAGE_NUM);
         }
+        HAL_IWDG_Refresh(&hiwdg);
+        taskdelay(10);
+
+        MutexTake(FlashMutex);
+        HAL_FLASH_Unlock();
     }
     HAL_FLASH_Lock();
     MutexGive(FlashMutex);
 
-    /* 最后输出完成状态 */
     LOGI("FOTA: Erase complete\r\n");
 }
 
 void write_flash_buffer(uint32_t dst_addr, const uint8_t *data, uint16_t len)
 {
     uint16_t word_count = 0;
+    uint8_t write_err = 0;
     MutexTake(FlashMutex);
     HAL_FLASH_Unlock();
     for (uint16_t i = 0; i < len; i += 4) {
         uint32_t word;
         memcpy(&word, data + i, 4);
         if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, dst_addr + i, word) != HAL_OK) {
-            LOGI("FOTA: Flash write fail @ 0x%08X\r\n", dst_addr + i);
+            write_err = 1;
         }
-        /* 每 128 个字(~5.8ms)刷新看门狗并让出 CPU，
-         * 给按键/呼吸灯等任务执行机会 */
         word_count++;
         if (word_count >= 128) {
             word_count = 0;
+            /* 释放锁再 LOGI/delay */
+            HAL_FLASH_Lock();
+            MutexGive(FlashMutex);
+
+            if (write_err) {
+                LOGI("FOTA: Flash write fail @ 0x%08X\r\n", dst_addr + (i - 4*128 + 4));
+                write_err = 0;
+            }
             HAL_IWDG_Refresh(&hiwdg);
             taskdelay(3);
+
+            MutexTake(FlashMutex);
+            HAL_FLASH_Unlock();
         }
     }
     HAL_FLASH_Lock();
