@@ -853,8 +853,6 @@ void SemaphoreTake(Semaphore_t *sem)
     {
         // 持有资源，计数清零直接返回 / Resource available, clear count and return
         sem->count = 0;
-        runninglist->taskTCB.held_mutex_count++;
-        runninglist->taskTCB.held_mutex_count++;
         __enable_irq();
         return;
     }
