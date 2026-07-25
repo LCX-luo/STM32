@@ -36,3 +36,11 @@ DebugConfig/
 __pycache__/
 *.pyc
 !MDK-ARM/cubetest/cubetest.sct
+
+# Personal study notes
+学习笔记/
+待完善+学习笔记.md
+
+# Temp / test files
+test_str.txt
+MDK-ARM/build.log
