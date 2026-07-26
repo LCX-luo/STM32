@@ -15,6 +15,7 @@ static void IdleTask_Entry(void* arg);
 unsigned int OsRunningTime_ms = 0;
 uint8_t OS_Running = 0;               // 系统运行标志位，0未启动1已启动 / System running flag, 0:not running 1:running
 volatile uint32_t sw_wdg_counter = 0; // 软件看门狗计时计数器 / Software watchdog tick counter
+TaskList *idle_task_ptr = NULL; // IdleTask 指针，用于 CPU 空闲率精确判定
 // 多优先级就绪任务链表数组 / Ready task linked list array for multi-priority
 TaskList *readyList[Max_PRIORITY];
 // 待抢占调度任务指针 / Preempt pending task pointer
@@ -589,7 +590,8 @@ void StartScheduler(void)
     TaskCreateEX(IdleTask_Entry, NULL,0, 64, (unsigned char *)"OS_Idle");
 // 重复创建空闲任务变量接收句柄 / Receive idle task handle
     TaskList* idle_task = TaskCreateEX(IdleTask_Entry, NULL,0, 64, (unsigned char *)"OS_Idle");
-    
+    idle_task_ptr = idle_task; // 保存指针供 CPU 占用率计算
+
     // 空闲任务创建失败，内存不足卡死 / Idle task create failed, OOM lockup
     if (idle_task == NULL) {
         __disable_irq();
@@ -633,7 +635,7 @@ void SysTick_Handler(void)
     }
     OsRunningTime_ms++; // 系统运行毫秒计数自增 / System runtime ms counter increase
     sw_wdg_counter++; // 软件看门狗计时自增 / SW watchdog tick increase
-    if (runninglist && runninglist->taskTCB.priority == 0)
+    if (runninglist == idle_task_ptr)
         idle_tick_count++; // 当前是 IdleTask 运行 → 计为 1ms 空闲
     HAL_IWDG_Refresh(&hiwdg); // 刷新硬件独立看门狗 / Refresh hardware IWDG
     // 软件看门狗超时检测 / Software watchdog timeout check

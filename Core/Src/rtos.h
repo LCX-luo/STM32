@@ -53,6 +53,7 @@ typedef struct
 extern unsigned int OsRunningTime_ms;
 extern uint8_t OS_Running;
 extern volatile uint32_t sw_wdg_counter;
+extern TaskList *idle_task_ptr;
 extern volatile uint32_t idle_tick_count;
 extern uint16_t os_ready_bitmap;
 extern TaskList *runninglist;
