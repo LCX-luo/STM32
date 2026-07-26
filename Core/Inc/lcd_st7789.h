@@ -18,6 +18,9 @@
 #define MAGENTA     0xF81F
 #define GRAY        0x8410
 
+/* 批量填充矩形区域 */
+void Lcd_FillRegion(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color);
+
 /* 公开 API */
 void Lcd_Init(void);
 void Lcd_Reset(void);

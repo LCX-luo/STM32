@@ -25,7 +25,7 @@
 #define GMCTRN1   0xE1  /* Negative gamma correction */
 
 /* SPI 互斥锁 */
-static Semaphore_t *SpiSem = NULL;
+Semaphore_t *SpiSem = NULL;
 
 /* 写命令/数据 */
 static void WriteCmd(uint8_t cmd)
@@ -166,4 +166,20 @@ void Lcd_DrawString(int x, int y, const char *str, uint16_t fg, uint16_t bg)
         if (x + FONT_W > LCD_WIDTH) { x = 0; y += FONT_H; }
         str++;
     }
+}
+void Lcd_FillRegion(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color)
+{
+    uint32_t pixels = (uint32_t)w * h;
+    uint8_t hi = color >> 8;
+    uint8_t lo = color & 0xFF;
+
+    Lcd_SetWindow(x, y, w, h);
+
+    SemaphoreTake(SpiSem);
+    HAL_GPIO_WritePin(LCD_DC_GPIO_Port, LCD_DC_Pin, GPIO_PIN_SET);
+    for (uint32_t i = 0; i < pixels; i++) {
+        HAL_SPI_Transmit(&hspi1, &hi, 1, HAL_MAX_DELAY);
+        HAL_SPI_Transmit(&hspi1, &lo, 1, HAL_MAX_DELAY);
+    }
+    SemaphoreGive(SpiSem);
 }
