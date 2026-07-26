@@ -233,69 +233,50 @@ void badtask(void *arg)
  */
 
 #ifdef FOTA_DEMO_NEW
-/* FOTA demo: button only toggles PB5, no breathing control */
+/* FOTA demo: button toggles PB5 + HogTask follows PB5 state */
 void ledtask(void *arg)
 {
   while (1)
   {
     SemaphoreTake(ButtonSem);
     taskdelay(20);
-
-    /* HogCtrl: every press toggles HogTask */
-    if (g_hog_task == NULL)
-    {
-      g_hog_task = TaskCreate(CpuHogTask_Entry, NULL, 0, (unsigned char *)"HogTask");
-    }
-    else
-    {
-      TaskDelete(g_hog_task);
-      g_hog_task = NULL;
-      taskdelay(5); /* 让 IdleTask 回收内存 */
-    }
-
     if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
     {
       HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5);
-      while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
-        taskdelay(10);
+      GPIO_PinState pb5 = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_5);
+      if (pb5 == GPIO_PIN_SET && g_hog_task == NULL)
+        g_hog_task = TaskCreate(CpuHogTask_Entry, NULL, 0, (unsigned char *)"HogTask");
+      else if (pb5 == GPIO_PIN_RESET && g_hog_task != NULL)
+      { TaskDelete(g_hog_task); g_hog_task = NULL; }
+      while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET) taskdelay(10);
       taskdelay(20);
     }
   }
 }
 #else
-/* Normal: button = breathing toggle + PB5 + HogTask toggle */
+/* Normal: breathing + PB5 + HogTask atomic */
 void ledtask(void *arg)
 {
   while (1)
   {
     SemaphoreTake(ButtonSem);
     taskdelay(20);
-
-    /* HogCtrl: every press toggles HogTask */
-    if (g_hog_task == NULL)
-    {
-      g_hog_task = TaskCreate(CpuHogTask_Entry, NULL, 0, (unsigned char *)"HogTask");
-    }
-    else
-    {
-      TaskDelete(g_hog_task);
-      g_hog_task = NULL;
-      taskdelay(5); /* 让 IdleTask 回收内存 */
-    }
-
     if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
     {
       breathing_mode = !breathing_mode;
       if (breathing_mode)
       {
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+        if (g_hog_task == NULL)
+          g_hog_task = TaskCreate(CpuHogTask_Entry, NULL, 0, (unsigned char *)"HogTask");
       }
       else
       {
         HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
+        if (g_hog_task != NULL)
+        { TaskDelete(g_hog_task); g_hog_task = NULL; }
       }
-      while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
-        taskdelay(10);
+      while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET) taskdelay(10);
       taskdelay(20);
     }
   }
