@@ -10,6 +10,7 @@
 #include "main.h"
 #include "dma.h"
 #include "iwdg.h"
+#include "spi.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -21,6 +22,7 @@
 #include <stdarg.h> // 为了使用 va_list
 #include "rtos.h"   // 引入自定义 RTOS 系统
 #include "flash_update.h"
+#include "lcd_st7789.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -72,6 +74,7 @@ uint8_t my_itoa(unsigned int num, char *str);
 void LOGI(const char *format, ...);
 /* FlashUpdateTask: FOTA receive + flash write. Priority 1 (lowest user). */
 void FlashUpdateTask_Entry(void *arg);
+void LcdTestTask_Entry(void *arg);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -363,6 +366,20 @@ void pwmtask(void *arg)
     }
   }
 }
+void LcdTestTask_Entry(void *arg)
+{
+    Lcd_Init();
+    Lcd_Fill(RED);
+    taskdelay(500);
+    Lcd_Fill(BLACK);
+    Lcd_DrawString(10, 10, "RTOS Running!", WHITE, BLACK);
+    Lcd_DrawString(10, 30, "FOTA Ready", GREEN, BLACK);
+    while (1)
+    {
+        taskdelay(1000);
+    }
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -397,6 +414,7 @@ int main(void)
   MX_USART2_UART_Init();
   MX_IWDG_Init();
   MX_TIM2_Init();
+  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
 
@@ -422,6 +440,7 @@ int main(void)
   //TaskCreate(GenericButtonTask_Entry, NULL, 2, (unsigned char *)"GenericButtonTask");
   // 5. 在线升级 FOTA 任务（最低用户优先级 1，后台运行）
   TaskCreateEX(FlashUpdateTask_Entry, NULL, 1, 200, (unsigned char *)"FlashUpd");
+  TaskCreate(LcdTestTask_Entry, NULL, 2, (unsigned char *)"LcdTest");
   // 4. 启动调度器，系统接管 CPU 控制权
   StartScheduler();
   /* USER CODE END 2 */
