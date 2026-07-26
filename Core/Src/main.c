@@ -244,7 +244,7 @@ void ledtask(void *arg)
     /* HogCtrl: every press toggles HogTask */
     if (g_hog_task == NULL)
     {
-      g_hog_task = TaskCreate(CpuHogTask_Entry, NULL, 2, (unsigned char *)"HogTask");
+      g_hog_task = TaskCreate(CpuHogTask_Entry, NULL, 0, (unsigned char *)"HogTask");
     }
     else
     {
@@ -274,7 +274,7 @@ void ledtask(void *arg)
     /* HogCtrl: every press toggles HogTask */
     if (g_hog_task == NULL)
     {
-      g_hog_task = TaskCreate(CpuHogTask_Entry, NULL, 2, (unsigned char *)"HogTask");
+      g_hog_task = TaskCreate(CpuHogTask_Entry, NULL, 0, (unsigned char *)"HogTask");
     }
     else
     {
