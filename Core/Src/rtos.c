@@ -28,6 +28,7 @@ TaskList *suspendlist;
 // 等待资源回收的已删除任务链表头 / Deleted task list waiting for memory recycle
 TaskList *tasksWaitingTermination = NULL;
 uint16_t os_ready_bitmap = 0; // 就绪优先级位图，用于O(1)查询最高优先级 / Ready priority bitmap for O(1) highest priority lookup
+volatile uint32_t idle_tick_count = 0; // SysTick 中 IdleTask 运行次数计数（≈空闲 ms）
 
 /* ======================== 内存管理模块(heap4风格:最佳适配+双向链表+最小内存块约束) / Memory Manager Module (heap4 style: best-fit + doubly linked list + min block constraint) ======================== */
 static unsigned char my_rtos_heap[RTOS_HEAP_SIZE];
@@ -153,6 +154,21 @@ void my_os_free(void *ptr)
 }
 
     __enable_irq(); // 恢复中断 / Re-enable irq
+}
+
+/* 获取当前空闲堆总大小 | Get free heap size */
+uint32_t my_os_get_free_heap(void)
+{
+    uint32_t total = 0;
+    __disable_irq();
+    MemBlock_t *curr = freeListHead;
+    while (curr != NULL)
+    {
+        total += curr->size;
+        curr = curr->next;
+    }
+    __enable_irq();
+    return total;
 }
 
 /************************ 任务链表操作函数 / Task Linked List Operation Functions ************************/
@@ -290,7 +306,6 @@ static void IdleTask_Entry(void* arg)
 
         // 1. 重置软件看门狗计数器，标记CPU正常运行 / Reset sw watchdog counter, mark CPU alive
         sw_wdg_counter = 0;
-
         // 2. 取出待回收的删除任务节点 / Fetch deleted task node waiting for recycle
         __disable_irq();
             if (tasksWaitingTermination != NULL)
@@ -618,6 +633,8 @@ void SysTick_Handler(void)
     }
     OsRunningTime_ms++; // 系统运行毫秒计数自增 / System runtime ms counter increase
     sw_wdg_counter++; // 软件看门狗计时自增 / SW watchdog tick increase
+    if (runninglist && runninglist->taskTCB.priority == 0)
+        idle_tick_count++; // 当前是 IdleTask 运行 → 计为 1ms 空闲
     HAL_IWDG_Refresh(&hiwdg); // 刷新硬件独立看门狗 / Refresh hardware IWDG
     // 软件看门狗超时检测 / Software watchdog timeout check
     if (sw_wdg_counter > WDG_TIMEOUT_MS)

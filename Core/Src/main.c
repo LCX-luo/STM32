@@ -53,6 +53,8 @@ Semaphore_t *ButtonSem = NULL;
 volatile uint8_t breathing_mode = 1;     // 1: 呼吸模式, 0: 常亮模式
 volatile uint8_t global_button_flag = 0; // 通用按键事件标志，可供任意任务轮询读取
 Mutex_t *FlashMutex = NULL;              // Flash 控制器互斥锁
+uint8_t g_hog_counter = 0;               // 按键计数：3次启 HogTask，6次删除
+TaskList *g_hog_task = NULL;             // HogTask 句柄
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -74,7 +76,7 @@ uint8_t my_itoa(unsigned int num, char *str);
 void LOGI(const char *format, ...);
 /* FlashUpdateTask: FOTA receive + flash write. Priority 1 (lowest user). */
 void FlashUpdateTask_Entry(void *arg);
-void LcdTestTask_Entry(void *arg);
+void CpuHogTask_Entry(void *arg);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -228,67 +230,65 @@ void badtask(void *arg)
  * @brief 按键任务（FOTA 测试版）：仅控制 PB5，不干扰呼吸
  * @note  编译时添加 FOTA_DEMO_NEW 宏启用
  */
+
 #ifdef FOTA_DEMO_NEW
-/* 按键控制呼吸灯+PB5 | Button: toggle breathing + PB5 */
+/* FOTA demo: button only toggles PB5, no breathing control */
 void ledtask(void *arg)
 {
-  while (1)
-  {
-    SemaphoreTake(ButtonSem);
-    taskdelay(20);
-    if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
+    while (1)
     {
-      HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5);
-      LOGI("PB5 Toggle\r\n");
-      while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
-        taskdelay(10);
-      taskdelay(20);
+        SemaphoreTake(ButtonSem);
+        taskdelay(20);
+
+        /* HogCtrl: every press toggles HogTask */
+        if (g_hog_task == NULL) {
+            g_hog_task = TaskCreate(CpuHogTask_Entry, NULL, 2, (unsigned char *)"HogTask");
+        } else {
+            TaskDelete(g_hog_task);
+            g_hog_task = NULL;
+        }
+
+        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
+        {
+            HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_5);
+            while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
+                taskdelay(10);
+            taskdelay(20);
+        }
     }
-  }
 }
 #else
-/**
- * @brief 按键扫描任务（原版）：切换呼吸模式 + 同步控制 PB5 LED
- * @note  按一下呼吸灯启动 + PB5 点亮，再按一下呼吸灯关闭 + PB5 熄灭
- */
+/* Normal: button = breathing toggle + PB5 + HogTask toggle */
 void ledtask(void *arg)
 {
-  while (1)
-  {
-    // 1. 等待信号量。没有按键时，任务处于 BLOCKED 状态，不消耗算力
-    SemaphoreTake(ButtonSem);
-
-    // 2. 软件消抖
-    taskdelay(20);
-
-    // 3. 再次确认电平（过滤电磁干扰）
-    if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
+    while (1)
     {
-      // 切换呼吸模式
-      breathing_mode = !breathing_mode;
+        SemaphoreTake(ButtonSem);
+        taskdelay(20);
 
-      if (breathing_mode)
-      {
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);   // PB5 点亮
-        LOGI("Button: Breathing ON, PB5 ON\r\n");
-      }
-      else
-      {
-        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET); // PB5 熄灭
-        LOGI("Button: Breathing OFF, PB5 OFF\r\n");
-      }
+        /* HogCtrl: every press toggles HogTask */
+        if (g_hog_task == NULL) {
+            g_hog_task = TaskCreate(CpuHogTask_Entry, NULL, 2, (unsigned char *)"HogTask");
+        } else {
+            TaskDelete(g_hog_task);
+            g_hog_task = NULL;
+        }
 
-      // 4. 等待松开逻辑保持不变
-      while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
-      {
-        taskdelay(10);
-      }
-      taskdelay(20); // 松手消抖
+        if (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
+        {
+            breathing_mode = !breathing_mode;
+            if (breathing_mode) {
+                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_SET);
+            } else {
+                HAL_GPIO_WritePin(GPIOB, GPIO_PIN_5, GPIO_PIN_RESET);
+            }
+            while (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10) == GPIO_PIN_SET)
+                taskdelay(10);
+            taskdelay(20);
+        }
     }
-  }
 }
 #endif
-
 // =========================================================================
 // 2. 全新通用按键事件分发任务 (替代原本的 ledtask)
 // 原理：利用 EXTI 中断释放的 Semaphore，唤醒本任务进行消抖并改变全局状态
@@ -366,17 +366,74 @@ void pwmtask(void *arg)
     }
   }
 }
-void LcdTestTask_Entry(void *arg)
+/* 系统监控任务 | System Monitor LCD Task */
+void SysMonTask_Entry(void *arg)
 {
+    char line[36];
+    uint32_t prev_idle = 0, prev_time = 0;
+
     Lcd_Init();
-    Lcd_Fill(RED);
-    taskdelay(500);
-    Lcd_Fill(BLACK);
-    Lcd_DrawString(10, 10, "RTOS Running!", WHITE, BLACK);
-    Lcd_DrawString(10, 30, "FOTA Ready", GREEN, BLACK);
+    taskdelay(10);
+    Lcd_FillRegion(0, 0, 240, 240, BLACK);
+
     while (1)
     {
-        taskdelay(1000);
+        uint32_t now = OsRunningTime_ms;
+        uint32_t idle = idle_tick_count;
+        uint32_t free_h = my_os_get_free_heap();
+        uint32_t used_h = 12288 - free_h;
+        int blk_cnt = 0, sus_cnt = 0;
+
+        TaskList *p = blockedlist;
+        while (p) { blk_cnt++; p = p->next; }
+        p = suspendlist;
+        while (p) { sus_cnt++; p = p->next; }
+
+        uint32_t dt = now - prev_time;
+        uint32_t cpu_idle = 100;
+        if (dt > 50)
+        {
+            uint32_t idle_delta = idle - prev_idle;
+            if (idle_delta < dt)
+                cpu_idle = idle_delta * 100 / dt;
+            else
+                cpu_idle = 100;
+        }
+        prev_idle = idle;
+        prev_time = now;
+
+        /* 固定宽度显示，防止残留 */
+        #ifdef FOTA_DEMO_NEW
+        Lcd_DrawString(0, 0, "== FOTA DEMO MODE ==", RED, BLACK);
+        #else
+        Lcd_DrawString(0, 0, "== System Monitor ==", CYAN, BLACK);
+        #endif
+
+        snprintf(line, 36, "Uptime: %4lus", now / 1000);
+        Lcd_DrawString(0, 14, line, WHITE, BLACK);
+        snprintf(line, 36, "CPU Idle: %3lu%%", cpu_idle);
+        Lcd_DrawString(0, 28, line, GREEN, BLACK);
+        snprintf(line, 36, "Heap: %4lu/%4lu (%3lu%%)",
+                 used_h, used_h + free_h, used_h * 100 / (used_h + free_h));
+        Lcd_DrawString(0, 42, line, YELLOW, BLACK);
+        snprintf(line, 36, "Ready B:%d S:%d", blk_cnt, sus_cnt);
+        Lcd_DrawString(0, 56, line, GRAY, BLACK);
+
+        taskdelay(1000);  /* 改为每秒刷新一次，减少 CPU 占用 */
+    }
+}
+
+
+
+
+void CpuHogTask_Entry(void *arg)
+{
+    volatile uint32_t x = 0;
+    (void)arg;
+    while (1)
+    {
+        for (int i = 0; i < 100000; i++)
+            x += i * i;
     }
 }
 
@@ -440,7 +497,7 @@ int main(void)
   //TaskCreate(GenericButtonTask_Entry, NULL, 2, (unsigned char *)"GenericButtonTask");
   // 5. 在线升级 FOTA 任务（最低用户优先级 1，后台运行）
   TaskCreateEX(FlashUpdateTask_Entry, NULL, 1, 200, (unsigned char *)"FlashUpd");
-  TaskCreate(LcdTestTask_Entry, NULL, 2, (unsigned char *)"LcdTest");
+  TaskCreate(SysMonTask_Entry, NULL, 1, (unsigned char *)"SysMon");
   // 4. 启动调度器，系统接管 CPU 控制权
   StartScheduler();
   /* USER CODE END 2 */

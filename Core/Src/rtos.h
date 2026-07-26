@@ -52,12 +52,18 @@ typedef struct
 // 允许 main.c 等其他文件读取系统运行时间与运行状态
 extern unsigned int OsRunningTime_ms;
 extern uint8_t OS_Running;
+extern volatile uint32_t sw_wdg_counter;
+extern volatile uint32_t idle_tick_count;
 extern uint16_t os_ready_bitmap;
+extern TaskList *runninglist;
+extern TaskList *blockedlist;
+extern TaskList *suspendlist;
 
 /************************ RTOS 公开 API 声明 ************************/
 void my_os_heap_init(void);
 void *my_os_malloc(uint32_t size);
 void my_os_free(void *ptr);
+uint32_t my_os_get_free_heap(void);
 
 // 修改 rtos.h 中的声明
 TaskList *TaskCreate(void (*taskFunction)(void *), void *arg, unsigned int priority, unsigned char *TaskName);
