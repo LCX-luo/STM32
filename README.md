@@ -59,6 +59,8 @@ Bootloader (7KB)    App (28KB)    Staging Area (28KB)    Flag (1KB)
 │   └── protocol.py          # 协议编解码
 ├── 项目报告.md              # 完整的开发记录（含 12 个 Bug 排查实录）
 ├── 版本更新.md              # 逐版本变更日志与设计决策
+├── LCD问题分析报告.md       # SPI 显示屏适配问题排查全过程
+├── 学习笔记/                # 嵌入式面试学习资料（.gitignore）
 └── README.md
 ```
 
@@ -111,6 +113,60 @@ GND ←→ GND
 pip install pyserial
 python PC_Tool/fw_updater.py
 # 打开串口 → 选择 .bin → 开始升级
+```
+
+---
+
+## 🧷 硬件接线指南
+
+### MCU 引脚分配
+
+| 引脚 | 功能 | 连接 |
+|------|------|------|
+| PA0 | TIM2_CH1 PWM | 呼吸灯 LED（阳极接 PA0，阴极串电阻接 GND）|
+| PA1 | GPIO Output | LCD_RES（显示屏复位）|
+| PA2 | USART2_TX | USB-TTL RX（上位机接收）|
+| PA3 | USART2_RX | USB-TTL TX（上位机发送）|
+| PA4 | GPIO Output | LCD_DC（显示屏数据/命令选择）|
+| PA5 | SPI1_SCK | LCD_SCL（显示屏 SPI 时钟）|
+| PA7 | SPI1_MOSI | LCD_SDA（显示屏 SPI 数据）|
+| PA10 | EXTI10 (Input, Pull-down) | 按键（另一端接 3.3V）|
+| PA13 | SWDIO | ST-Link 调试 |
+| PA14 | SWCLK | ST-Link 调试 |
+| PB5 | GPIO Output | 指示灯 LED（高电平点亮）|
+| PC13 | GPIO Output | 板载 LED（心跳闪烁）|
+| PD0 | OSC_IN | 8MHz HSE 晶振 |
+| PD1 | OSC_OUT | 8MHz HSE 晶振 |
+
+### LCD 显示屏 (ST7789, SPI)
+
+```
+LCD 引脚  ←→  STM32 引脚
+  GND     ←→  GND
+  VCC     ←→  3.3V
+  SCL     ←→  PA5 (SPI1_SCK)
+  SDA     ←→  PA7 (SPI1_MOSI)
+  RES     ←→  PA1 (GPIO)
+  DC      ←→  PA4 (GPIO)
+  BLK     ←→  3.3V（背光常亮）
+```
+
+### 串口调试
+
+```
+STM32 PA2 (TX) ←→ USB-TTL RX
+STM32 PA3 (RX) ←→ USB-TTL TX
+GND ←→ GND
+波特率: 115200-8N1
+```
+
+### 调试器
+
+```
+STM32 PA13 (SWDIO) ←→ ST-Link SWDIO
+STM32 PA14 (SWCLK) ←→ ST-Link SWCLK
+STM32 GND          ←→ ST-Link GND
+STM32 3.3V         ←→ ST-Link 3.3V (可选)
 ```
 
 ---
