@@ -60,6 +60,7 @@ void SystemClock_Config(void);
 #define APP_SIZE           0x00007000
 #define FLAG_PAGE_ADDR     0x08001C00     // 标志位页（独立第7页）
 #define UPDATE_FLAG_ADDR   0x08001FFC     // 标志位地址
+#define COPY_PROGRESS_ADDR 0x08001C00     // 拷贝进度位图（8 字节，每页 1 bit）
 #define MAGIC_UPDATE_READY 0xA5A5A5A5
 
 typedef void (*pFunction)(void);
@@ -67,39 +68,64 @@ typedef void (*pFunction)(void);
 /**
   * @brief 搬运新固件：擦 App → 拷贝 Staging → 清理
   */
-/* copy_new_firmware: Erase app area, copy staging->app, erase staging+flag. */
+/* copy_new_firmware: Copy with progress bitmap (1-bit per page, zero-copy-power-loss safe) */
 static void copy_new_firmware(void)
 {
-    uint32_t word, src, dst;
-    uint32_t page_error = 0;
+    uint32_t src, dst, word, page_error = 0;
+    uint32_t progress_lo, progress_hi;
     FLASH_EraseInitTypeDef erase = {0};
 
     HAL_FLASH_Unlock();
 
-    /* 1. 擦除 App 区域 (28KB = 28 页) */
-    erase.TypeErase = FLASH_TYPEERASE_PAGES;
-    erase.PageAddress = APP_START_ADDRESS;
-    erase.NbPages = 28;
-    if (HAL_FLASHEx_Erase(&erase, &page_error) != HAL_OK) {
-        while(1);  // 擦除失败，死机保护
+    /* Read progress bitmap (64 bits: bit N = 1 means page N not yet copied) */
+    progress_lo = *(__IO uint32_t*)COPY_PROGRESS_ADDR;
+    progress_hi = *(__IO uint32_t*)(COPY_PROGRESS_ADDR + 4);
+
+    /* If first copy (all 1s), erase app area */
+    if (progress_lo == 0xFFFFFFFF && progress_hi == 0xFFFFFFFF) {
+        erase.TypeErase = FLASH_TYPEERASE_PAGES;
+        erase.PageAddress = APP_START_ADDRESS;
+        erase.NbPages = 28;
+        if (HAL_FLASHEx_Erase(&erase, &page_error) != HAL_OK) while(1);
     }
 
-    /* 2. 从 Staging 逐字拷贝到 App（拷贝全部 28KB，不跳过 0xFFFFFFFF）*/
-    for (uint32_t offset = 0; offset < STAGING_SIZE; offset += 4) {
-        src = STAGING_ADDR + offset;
-        dst = APP_START_ADDRESS + offset;
-        word = *(__IO uint32_t*)src;
-        if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, dst, word) != HAL_OK) {
-            while(1);
+    /* Copy each unfinished page, mark progress after each */
+    for (uint32_t page = 0; page < 28; page++) {
+        uint32_t mask = 1UL << (page & 31);        /* bit mask within 32-bit word */
+
+        if (page < 32) {
+            if (!(progress_lo & mask)) continue;    /* already done */
+        } else {
+            if (!(progress_hi & mask)) continue;
+        }
+
+        /* Copy one page (1KB = 256 words) */
+        for (uint32_t off = 0; off < 1024; off += 4) {
+            src = STAGING_ADDR + page * 1024 + off;
+            dst = APP_START_ADDRESS + page * 1024 + off;
+            word = *(__IO uint32_t*)src;
+            if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, dst, word) != HAL_OK) while(1);
+        }
+
+        /* Mark page done: clear the bit (Program 1->0, no erase needed) */
+        uint32_t new_val;
+        if (page < 32) {
+            new_val = progress_lo & ~mask;
+            HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, COPY_PROGRESS_ADDR, new_val);
+            progress_lo = new_val;
+        } else {
+            new_val = progress_hi & ~mask;
+            HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, COPY_PROGRESS_ADDR + 4, new_val);
+            progress_hi = new_val;
         }
     }
 
-    /* 3. 擦除 Staging 区 (28 页) */
+    /* All done: erase staging + flag page (clears MAGIC + progress together) */
+    erase.TypeErase = FLASH_TYPEERASE_PAGES;
     erase.PageAddress = STAGING_ADDR;
     erase.NbPages = 28;
     HAL_FLASHEx_Erase(&erase, &page_error);
 
-    /* 4. 擦除标志位页 (第7页，独立页) */
     erase.PageAddress = FLAG_PAGE_ADDR;
     erase.NbPages = 1;
     HAL_FLASHEx_Erase(&erase, &page_error);

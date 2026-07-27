@@ -13,6 +13,7 @@
 
 #define FLAG_PAGE_ADDR      0x08001C00      // 标志位所在页（独立第7页）
 #define UPDATE_FLAG_ADDR    0x08001FFC      // 标志位地址
+#define COPY_PROGRESS_ADDR  0x08001C00      // 拷贝进度位图首地址（8 字节）
 #define MAGIC_UPDATE_READY  0xA5A5A5A5      // 新固件已就绪
 #define MAGIC_NONE          0xFFFFFFFF      // 无更新
 
