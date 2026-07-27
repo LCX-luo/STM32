@@ -77,19 +77,11 @@ static void copy_new_firmware(void)
 
     HAL_FLASH_Unlock();
 
-    /* Read progress bitmap (64 bits: bit N = 1 means page N not yet copied) */
+    /* Read progress bitmap (bit N = 1 = page N not yet copied) */
     progress_lo = *(__IO uint32_t*)COPY_PROGRESS_ADDR;
     progress_hi = *(__IO uint32_t*)(COPY_PROGRESS_ADDR + 4);
 
-    /* If first copy (all 1s), erase app area */
-    if (progress_lo == 0xFFFFFFFF && progress_hi == 0xFFFFFFFF) {
-        erase.TypeErase = FLASH_TYPEERASE_PAGES;
-        erase.PageAddress = APP_START_ADDRESS;
-        erase.NbPages = 28;
-        if (HAL_FLASHEx_Erase(&erase, &page_error) != HAL_OK) while(1);
-    }
-
-    /* Copy each unfinished page, mark progress after each */
+    /* Copy each unfinished page */
     for (uint32_t page = 0; page < 28; page++) {
         uint32_t mask = 1UL << (page & 31);        /* bit mask within 32-bit word */
 
@@ -99,10 +91,16 @@ static void copy_new_firmware(void)
             if (!(progress_hi & mask)) continue;
         }
 
+        /* Erase this page first (ensures 0xFFFF state after power cut) */
+        erase.TypeErase = FLASH_TYPEERASE_PAGES;
+        erase.PageAddress = APP_START_ADDRESS + page * 1024;
+        erase.NbPages = 1;
+        if (HAL_FLASHEx_Erase(&erase, &page_error) != HAL_OK) while(1);
+
         /* Copy one page (1KB = 256 words) */
         for (uint32_t off = 0; off < 1024; off += 4) {
-            src = STAGING_ADDR + page * 1024 + off;
             dst = APP_START_ADDRESS + page * 1024 + off;
+            src = STAGING_ADDR + page * 1024 + off;
             word = *(__IO uint32_t*)src;
             if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, dst, word) != HAL_OK) while(1);
         }
