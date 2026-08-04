@@ -775,7 +775,10 @@ void suspendTask(TaskList *task)
 
     if (task == NULL)
         task = runninglist; // 空参数挂起当前运行任务 / NULL param suspend self
-
+    if(task->taskTCB.task_state==SUSPEND){
+        __enable_irq();
+        return ;
+    }
     taskMoveOutList(task); // 从原链表移除 / Remove from original list
     task->taskTCB.task_state = SUSPEND; // 标记挂起态 / Mark task SUSPEND
 
